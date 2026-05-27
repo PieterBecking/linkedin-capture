@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LinkedIn → CRM</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="title">LinkedIn → CRM</div>
+      <a href="#" id="openOptions" class="link">settings</a>
+    </header>
+
+    <section id="status" class="status hidden"></section>
+
+    <section class="card">
+      <button id="captureBtn" class="btn primary">Capture this thread</button>
+      <div id="captureMeta" class="meta hidden"></div>
+    </section>
+
+    <section id="formCard" class="card hidden">
+      <label class="field-label">Meeting name &middot; #company &middot; @person</label>
+      <div
+        id="meetingTitle"
+        class="meeting-input"
+        contenteditable="true"
+        spellcheck="false"
+        data-placeholder="LinkedIn chat with @… at #…"
+      ></div>
+      <div id="pills" class="pills"></div>
+
+      <label class="field-label">Date</label>
+      <input id="meetingDate" type="date" class="date-input" />
+
+      <label class="field-label">Conversation preview</label>
+      <pre id="preview" class="preview"></pre>
+
+      <button id="saveBtn" class="btn primary">Add note to CRM</button>
+      <div id="saveResult" class="meta hidden"></div>
+    </section>
+
+    <div id="suggestPopover" class="suggest-popover hidden"></div>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

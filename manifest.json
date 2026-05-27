@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "LinkedIn → CRM capture",
+  "version": "0.1.0",
+  "description": "Capture an open LinkedIn message thread into the Servo7 CRM as a meeting note.",
+  "permissions": ["sidePanel", "storage", "activeTab", "scripting", "tabs"],
+  "host_permissions": [
+    "https://www.linkedin.com/*",
+    "https://crm.becking.dev/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Capture LinkedIn thread"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "options_page": "options.html"
+}
