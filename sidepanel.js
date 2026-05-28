@@ -84,6 +84,39 @@ function formatConversation(cap) {
     .join('\n\n');
 }
 
+function namesFromThreadTitle(threadTitle) {
+  if (!threadTitle) return [];
+  return threadTitle
+    .split(/,| and /i)
+    .map((n) => n.trim())
+    .filter((n) => n.length >= 2);
+}
+
+function resolvePersonCasing(rawName) {
+  if (!manifest) return rawName;
+  const target = rawName.toLowerCase();
+  const pool = [
+    ...(manifest.people_ranked || []),
+    ...(manifest.team || []),
+    ...(manifest.companies || []).flatMap((c) => (c.people || []).map((p) => p.name)),
+  ];
+  const hit = pool.find((n) => n && n.toLowerCase() === target);
+  return hit || rawName;
+}
+
+function resetToHomescreen() {
+  captured = null;
+  pendingCompany = null;
+  pendingAttendees = [];
+  titleEl.textContent = '';
+  dateEl.value = todayStr();
+  previewEl.textContent = '';
+  formCard.classList.add('hidden');
+  captureMeta.classList.add('hidden');
+  saveResult.classList.add('hidden');
+  renderPills();
+}
+
 // ── manifest ───────────────────────────────────────────────────────────────
 async function loadManifest() {
   const { crmUrl, internalToken } = await getSettings();
@@ -379,6 +412,12 @@ async function captureCurrentTab() {
     return;
   }
 
+  // Fresh start for every capture — drop any stale pills/title from a prior thread.
+  pendingCompany = null;
+  pendingAttendees = [];
+  titleEl.textContent = '';
+  saveResult.classList.add('hidden');
+
   captured = result;
   captureMeta.textContent = `${result.messages.length} message${
     result.messages.length === 1 ? '' : 's'
@@ -386,10 +425,15 @@ async function captureCurrentTab() {
   captureMeta.classList.remove('hidden');
   previewEl.textContent = formatConversation(result);
 
-  if (!titleEl.textContent.trim() && result.threadTitle) {
-    titleEl.textContent = `LinkedIn chat — ${result.threadTitle}`;
-  }
-  if (!dateEl.value) dateEl.value = todayStr();
+  // Seed @person attendees from the thread title (1:1 = one name, group = N).
+  namesFromThreadTitle(result.threadTitle).forEach((raw) => {
+    const name = resolvePersonCasing(raw);
+    if (name && !pendingAttendees.includes(name)) pendingAttendees.push(name);
+  });
+  renderPills();
+
+  titleEl.textContent = 'LinkedIn chat';
+  dateEl.value = todayStr();
 
   formCard.classList.remove('hidden');
   setStatus(`Captured ${result.messages.length} messages.`, 'ok');
@@ -455,13 +499,13 @@ async function saveToCrm() {
     }
     const matchedC = (data.matched_companies || []).filter((c) => c.company_id).length;
     const matchedP = (data.matched_people || []).filter((p) => p.person_id).length;
-    saveResult.textContent =
+    const summary =
       `${data.created ? 'Created' : 'Updated'} note ${data.id} · ` +
       `companies ${matchedC}/${data.matched_companies?.length || 0} matched · ` +
       `people ${matchedP}/${data.matched_people?.length || 0} matched · ` +
       `tasks ${data.tasks_created || 0}`;
-    saveResult.classList.remove('hidden');
-    setStatus(data.created ? 'Note created in CRM.' : 'Note updated in CRM.', 'ok');
+    resetToHomescreen();
+    setStatus(`${data.created ? 'Note created' : 'Note updated'} — ${summary}`, 'ok');
   } catch (e) {
     setStatus(`Save error: ${e.message}`, 'err');
   } finally {
