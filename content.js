@@ -1,4 +1,4 @@
-// Scrapes the open LinkedIn message thread. Idempotent — safe to inject
+// Scrapes the open LinkedIn message thread. Idempotent: safe to inject
 // multiple times via chrome.scripting.executeScript.
 (() => {
   function txt(el) {

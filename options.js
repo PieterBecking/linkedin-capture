@@ -46,7 +46,7 @@ async function test() {
     }
     const data = await r.json();
     const companies = (data.companies || []).length;
-    setMsg(`OK — ${companies} companies in manifest.`, '#30d158');
+    setMsg(`OK. ${companies} companies in manifest.`, '#30d158');
   } catch (e) {
     setMsg(`Error: ${e.message}`, '#ff453a');
   }

@@ -251,7 +251,7 @@ function positionPopover() {
 
 function renderSuggest() {
   if (suggestItems.length === 0) {
-    popoverEl.innerHTML = '<div class="suggest-empty">No matches — Enter to use as-is</div>';
+    popoverEl.innerHTML = '<div class="suggest-empty">No matches. Enter to use as-is</div>';
     suggestActive = 0;
   } else {
     if (suggestActive >= suggestItems.length) suggestActive = 0;
@@ -412,7 +412,7 @@ async function captureCurrentTab() {
     return;
   }
 
-  // Fresh start for every capture — drop any stale pills/title from a prior thread.
+  // Fresh start for every capture: drop any stale pills/title from a prior thread.
   pendingCompany = null;
   pendingAttendees = [];
   titleEl.textContent = '';
@@ -505,7 +505,7 @@ async function saveToCrm() {
       `people ${matchedP}/${data.matched_people?.length || 0} matched · ` +
       `tasks ${data.tasks_created || 0}`;
     resetToHomescreen();
-    setStatus(`${data.created ? 'Note created' : 'Note updated'} — ${summary}`, 'ok');
+    setStatus(`${data.created ? 'Note created' : 'Note updated'}. ${summary}`, 'ok');
   } catch (e) {
     setStatus(`Save error: ${e.message}`, 'err');
   } finally {
