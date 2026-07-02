@@ -6,7 +6,10 @@
 // 3. POST to {CRM_URL}/api/notes with X-Internal-Token auth.
 
 const DEFAULT_CRM_URL = 'https://crm.becking.dev';
-const LINKEDIN_THREAD_RE = /^https:\/\/www\.linkedin\.com\/messaging\/thread\//;
+// Matches both a normal thread (/messaging/thread/<id>/) and the compose
+// overlay opened from a profile (/messaging/compose/?profileUrn=...&recipient=...).
+const LINKEDIN_THREAD_RE =
+  /^https:\/\/www\.linkedin\.com\/messaging\/(thread\/|compose[/?])/;
 
 // ── settings ────────────────────────────────────────────────────────────────
 async function getSettings() {
@@ -391,7 +394,7 @@ async function captureCurrentTab() {
     return;
   }
   if (!LINKEDIN_THREAD_RE.test(tab.url || '')) {
-    setStatus('Open a LinkedIn message thread first (URL must contain /messaging/thread/).', 'warn');
+    setStatus('Open a LinkedIn message thread or compose overlay first (URL must contain /messaging/thread/ or /messaging/compose/).', 'warn');
     return;
   }
 
@@ -535,7 +538,7 @@ openOpts.addEventListener('click', (e) => {
 
   const tab = await getActiveTab();
   if (tab && !LINKEDIN_THREAD_RE.test(tab.url || '')) {
-    captureMeta.textContent = 'Open a LinkedIn message thread to capture.';
+    captureMeta.textContent = 'Open a LinkedIn message thread or compose overlay to capture.';
     captureMeta.classList.remove('hidden');
   }
 })();

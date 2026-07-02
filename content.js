@@ -6,8 +6,24 @@
   }
 
   function threadIdFromUrl() {
+    // Normal thread: /messaging/thread/<id>/
     const m = location.pathname.match(/\/messaging\/thread\/([^/]+)\/?/);
-    return m ? decodeURIComponent(m[1]) : null;
+    if (m) return decodeURIComponent(m[1]);
+
+    // Compose overlay opened from a profile: /messaging/compose/?recipient=...
+    // No thread id exists yet, so key off the recipient (fsd_profile id) so the
+    // CRM upsert (external_id = linkedin:<threadId>) stays stable per person.
+    if (/\/messaging\/compose\b/.test(location.pathname)) {
+      const params = new URLSearchParams(location.search);
+      const recipient = params.get('recipient');
+      if (recipient) return `compose:${recipient}`;
+      const urn = params.get('profileUrn'); // urn:li:fsd_profile:ACoAA...
+      if (urn) {
+        const id = urn.split(':').pop();
+        if (id) return `compose:${id}`;
+      }
+    }
+    return null;
   }
 
   function findThreadTitle() {
