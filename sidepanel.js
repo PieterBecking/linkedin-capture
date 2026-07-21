@@ -77,6 +77,22 @@ function getTitleText() {
   return clone.textContent.trim();
 }
 
+// Final note title: typed text plus the #company and @person pills,
+// skipping names the user already typed into the title themselves.
+function buildNoteTitle(typedTitle) {
+  const base = typedTitle || 'LinkedIn chat';
+  const lowerBase = base.toLowerCase();
+  const parts = [base];
+  if (pendingCompany?.title && !lowerBase.includes(pendingCompany.title.toLowerCase())) {
+    parts.push(pendingCompany.title);
+  }
+  const people = pendingAttendees.filter(
+    (n) => n && !lowerBase.includes(n.toLowerCase()),
+  );
+  if (people.length) parts.push(people.join(', '));
+  return parts.join(' - ');
+}
+
 function formatConversation(cap) {
   if (!cap?.messages?.length) return '(no messages found)';
   return cap.messages
@@ -469,7 +485,7 @@ async function saveToCrm() {
     conversation;
 
   const payload = {
-    title: title || pendingCompany?.title || 'LinkedIn chat',
+    title: buildNoteTitle(title),
     body_text: bodyText,
     date: dateEl.value || todayStr(),
     source: 'linkedin-capture',
