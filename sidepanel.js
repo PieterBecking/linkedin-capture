@@ -481,6 +481,7 @@ async function saveToCrm() {
   const conversation = formatConversation(captured);
   const bodyText =
     `Source: ${captured.url}\n` +
+    (captured.profileUrl ? `Profile: ${captured.profileUrl}\n` : '') +
     `Captured: ${captured.capturedAt}\n\n` +
     conversation;
 

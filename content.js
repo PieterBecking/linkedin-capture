@@ -42,6 +42,29 @@
     return null;
   }
 
+  function findProfileUrl() {
+    // 1:1 threads: the header links to the counterparty's profile.
+    const sel = [
+      'a.msg-thread__link-to-profile',
+      '.msg-thread__link-to-profile',
+      '.msg-entity-lockup a[href*="/in/"]',
+      '.msg-title-bar a[href*="/in/"]',
+      '.msg-overlay-bubble-header a[href*="/in/"]',
+    ];
+    for (const s of sel) {
+      const el = document.querySelector(s);
+      const href = el?.getAttribute('href');
+      if (!href) continue;
+      try {
+        const u = new URL(href, location.origin);
+        if (/\/in\//.test(u.pathname)) return u.origin + u.pathname;
+      } catch {
+        /* ignore malformed hrefs */
+      }
+    }
+    return null;
+  }
+
   function scrapeMessages() {
     const list =
       document.querySelector('.msg-s-message-list-content') ||
@@ -86,6 +109,7 @@
     url: location.href,
     threadId: threadIdFromUrl(),
     threadTitle: findThreadTitle(),
+    profileUrl: findProfileUrl(),
     capturedAt: new Date().toISOString(),
     messages,
   };
