@@ -1,3 +1,8 @@
+const DEFAULT_CRM_URL = 'https://brain.servo7.com';
+// The CRM moved from crm.becking.dev to brain.servo7.com. A stored legacy URL
+// is treated as unset so existing installs migrate without re-saving.
+const LEGACY_CRM_URL = 'https://crm.becking.dev';
+
 const crmUrlEl = document.getElementById('crmUrl');
 const tokenEl  = document.getElementById('internalToken');
 const saveBtn  = document.getElementById('saveBtn');
@@ -14,19 +19,19 @@ async function load() {
     'crmUrl',
     'internalToken',
   ]);
-  crmUrlEl.value = crmUrl || 'https://crm.becking.dev';
+  crmUrlEl.value = !crmUrl || crmUrl === LEGACY_CRM_URL ? DEFAULT_CRM_URL : crmUrl;
   tokenEl.value = internalToken || '';
 }
 
 async function save() {
-  const crmUrl = crmUrlEl.value.trim().replace(/\/+$/, '') || 'https://crm.becking.dev';
+  const crmUrl = crmUrlEl.value.trim().replace(/\/+$/, '') || DEFAULT_CRM_URL;
   const internalToken = tokenEl.value.trim();
   await chrome.storage.local.set({ crmUrl, internalToken });
   setMsg('Saved.', '#30d158');
 }
 
 async function test() {
-  const crmUrl = crmUrlEl.value.trim().replace(/\/+$/, '') || 'https://crm.becking.dev';
+  const crmUrl = crmUrlEl.value.trim().replace(/\/+$/, '') || DEFAULT_CRM_URL;
   const internalToken = tokenEl.value.trim();
   if (!internalToken) {
     setMsg('Add a token first.', '#ff453a');

@@ -1,6 +1,6 @@
 # LinkedIn → CRM capture
 
-Chrome extension (MV3, side panel). Captures the currently-open LinkedIn message thread and saves it as a meeting note in the [Servo7 CRM](https://crm.becking.dev), reusing the same `#company` / `@person` mention model as [the notes app](https://notes.becking.dev).
+Chrome extension (MV3, side panel). Captures the currently-open LinkedIn message thread and saves it as a meeting note in the [Servo7 CRM](https://brain.servo7.com), reusing the same `#company` / `@person` mention model as [the notes app](https://notes.becking.dev).
 
 ## How it works
 
@@ -18,7 +18,7 @@ The note is upserted by `external_id = linkedin:<threadId>`, so re-capturing the
 3. Click **Load unpacked** and pick this directory.
 4. Open the extension's **Options** page (right-click the toolbar icon → Options, or `chrome://extensions` → Details → Extension options).
 5. Set:
-   - **CRM base URL** — `https://crm.becking.dev` by default.
+   - **CRM base URL** — `https://brain.servo7.com` by default.
    - **Internal API token** — the value of `INTERNAL_API_TOKEN` from the CRM `.env`. Click **Test connection** to verify.
 
 Settings are stored locally via `chrome.storage.local`.
@@ -27,7 +27,7 @@ Settings are stored locally via `chrome.storage.local`.
 
 | File | Purpose |
 |---|---|
-| `manifest.json` | MV3 manifest. Declares `sidePanel`, `scripting`, `storage`, `tabs`, plus host permissions for `linkedin.com` and `crm.becking.dev`. |
+| `manifest.json` | MV3 manifest. Declares `sidePanel`, `scripting`, `storage`, `tabs`, plus host permissions for `linkedin.com` and `brain.servo7.com` (and legacy `crm.becking.dev` during the migration). |
 | `background.js` | Service worker. Sets `openPanelOnActionClick` so clicking the icon opens the side panel. |
 | `sidepanel.html` / `sidepanel.css` / `sidepanel.js` | Side panel UI: capture button, meeting-name input with `#` / `@` mentions, conversation preview, save button. |
 | `content.js` | Injected on demand into the LinkedIn tab. Scrapes `.msg-s-message-list-content` and returns `{ url, threadId, threadTitle, messages: [{sender, text, timestamp}] }`. |

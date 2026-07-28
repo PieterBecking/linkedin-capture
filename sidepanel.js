@@ -5,7 +5,10 @@
 //    powered by GET {CRM_URL}/api/manifest).
 // 3. POST to {CRM_URL}/api/notes with X-Internal-Token auth.
 
-const DEFAULT_CRM_URL = 'https://crm.becking.dev';
+const DEFAULT_CRM_URL = 'https://brain.servo7.com';
+// The CRM moved from crm.becking.dev to brain.servo7.com. A stored legacy URL
+// is treated as unset so existing installs migrate without an options visit.
+const LEGACY_CRM_URL = 'https://crm.becking.dev';
 // Matches both a normal thread (/messaging/thread/<id>/) and the compose
 // overlay opened from a profile (/messaging/compose/?profileUrn=...&recipient=...).
 const LINKEDIN_THREAD_RE =
@@ -17,8 +20,9 @@ async function getSettings() {
     'crmUrl',
     'internalToken',
   ]);
+  const stored = (crmUrl || '').replace(/\/+$/, '');
   return {
-    crmUrl: (crmUrl || DEFAULT_CRM_URL).replace(/\/+$/, ''),
+    crmUrl: !stored || stored === LEGACY_CRM_URL ? DEFAULT_CRM_URL : stored,
     internalToken: internalToken || '',
   };
 }
