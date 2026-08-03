@@ -1,12 +1,20 @@
 // Scrapes the open LinkedIn profile page (/in/<slug>) for the recruitment
-// export. Injected on demand via chrome.scripting.executeScript — the IIFE
-// result is the scrape payload. Idempotent; safe to inject repeatedly.
+// export. Injected on demand via chrome.scripting.executeScript — the async
+// IIFE result is the scrape payload. Idempotent; safe to inject repeatedly.
+//
+// Two sources, merged:
+//  1. The visible DOM (top card + section cards). Carries render-only signals
+//     like open-to-work, connection degree, followers, avatar.
+//  2. LinkedIn's embedded Voyager JSON — the raw API payloads the page ships
+//     in <code> elements. Cleaner and fuller (proper first/last name, full
+//     about text, dated positions), and matched to the URL slug so an SPA
+//     transition can never attribute the previous profile's data.
 //
 // Every read is wrapped so a LinkedIn DOM change yields a missing key, never
 // a thrown error that kills the export. Values that can't be read are
 // omitted, not guessed — email/phone live behind the contact-info overlay and
 // are deliberately not scraped.
-(() => {
+(async () => {
   const safe = (fn) => {
     try {
       return fn();
@@ -39,6 +47,158 @@
     return out;
   };
 
+  const uniq = (arr) => {
+    const seen = new Set();
+    return arr.filter((x) => {
+      const k = typeof x === 'string' ? x.toLowerCase() : JSON.stringify(x);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  };
+
+  const slug = safe(() =>
+    decodeURIComponent(location.pathname.match(/\/in\/([^/?#]+)/)[1]),
+  );
+
+  // ── wait for render ────────────────────────────────────────────────────────
+  // LinkedIn paints the profile lazily, and SPA navigations change the URL
+  // well before the DOM. The tab title flips to the new person immediately,
+  // so wait until the top-card h1 agrees with it (or time out and take what's
+  // there — the Voyager slug match below still guards the structured fields).
+  const waitFor = async (fn, timeoutMs = 4000, stepMs = 250) => {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const v = safe(fn);
+      if (v) return v;
+      if (Date.now() >= deadline) return undefined;
+      await new Promise((r) => setTimeout(r, stepMs));
+    }
+  };
+
+  await waitFor(() => {
+    const h1 = clean(document.querySelector('main h1')?.textContent);
+    if (!h1) return false;
+    const title = (clean(document.title) || '').toLowerCase();
+    return title.includes(h1.toLowerCase()) ? h1 : false;
+  });
+
+  // ── Voyager JSON (embedded API payloads) ──────────────────────────────────
+  function voyagerIncluded() {
+    const out = [];
+    for (const code of document.querySelectorAll('code')) {
+      const t = code.textContent || '';
+      if (t.length < 100 || !t.includes('"included"')) continue;
+      if (!/"(firstName|companyName|schoolName|publicIdentifier)"/.test(t)) continue;
+      const j = safe(() => JSON.parse(t));
+      if (j && Array.isArray(j.included)) out.push(...j.included);
+    }
+    return out;
+  }
+
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const fmtDate = (d) =>
+    d && (d.year || d.month)
+      ? [d.month ? MONTHS[d.month - 1] : null, d.year].filter(Boolean).join(' ')
+      : null;
+  const fmtRange = (dr) => {
+    if (!dr) return undefined;
+    const start = fmtDate(dr.start);
+    if (!start) return undefined;
+    return `${start} – ${fmtDate(dr.end) || 'Present'}`;
+  };
+  const startKey = (e) =>
+    (e.dateRange?.start?.year || 0) * 12 + (e.dateRange?.start?.month || 0);
+
+  function voyagerScrape() {
+    const included = safe(voyagerIncluded) || [];
+    if (!included.length || !slug) return {};
+    const isType = (e, suffix) =>
+      typeof e?.$type === 'string' && e.$type.endsWith(suffix);
+
+    // The profile entity for THIS page, matched by URL slug — entities from a
+    // previously viewed profile can't leak in.
+    const me = included.find(
+      (e) => e?.publicIdentifier === slug && (e.firstName || e.lastName),
+    );
+
+    const experience = uniq(
+      included
+        .filter((e) => isType(e, '.profile.Position') && e.title)
+        .sort((a, b) => startKey(b) - startKey(a))
+        .map((e) =>
+          strip({
+            title: clean(e.title),
+            company: clean(e.companyName),
+            date_range: fmtRange(e.dateRange),
+            location: clean(e.locationName || e.geoLocationName),
+            description: clean(e.description),
+          }),
+        ),
+    );
+
+    const education = uniq(
+      included
+        .filter((e) => isType(e, '.profile.Education') && e.schoolName)
+        .sort((a, b) => startKey(b) - startKey(a))
+        .map((e) =>
+          strip({
+            school: clean(e.schoolName),
+            degree: clean(e.degreeName),
+            field: clean(e.fieldOfStudy),
+            date_range: fmtRange(e.dateRange),
+          }),
+        ),
+    );
+
+    const skills = uniq(
+      included
+        .filter((e) => isType(e, '.profile.Skill'))
+        .map((e) => clean(e.name))
+        .filter(Boolean),
+    );
+
+    const languages = uniq(
+      included
+        .filter((e) => isType(e, '.profile.Language') && e.name)
+        .map((e) => {
+          const prof = clean((e.proficiency || '').toLowerCase().replace(/_/g, ' '));
+          return prof ? `${clean(e.name)} — ${prof}` : clean(e.name);
+        }),
+    );
+
+    const certifications = uniq(
+      included
+        .filter((e) => isType(e, '.profile.Certification') && e.name)
+        .map((e) =>
+          strip({
+            title: clean(e.name),
+            issuer: clean(e.authority),
+            date_range: fmtRange(e.dateRange),
+          }),
+        ),
+    );
+
+    return strip({
+      name:
+        me && (me.firstName || me.lastName)
+          ? clean(`${me.firstName || ''} ${me.lastName || ''}`)
+          : undefined,
+      first_name: clean(me?.firstName),
+      last_name: clean(me?.lastName),
+      headline: clean(me?.headline),
+      location: clean(me?.geoLocationName || me?.locationName),
+      about: clean(me?.summary),
+      industry: clean(me?.industryName),
+      experience,
+      education,
+      skills,
+      languages,
+      certifications,
+    });
+  }
+
+  // ── DOM scrape ────────────────────────────────────────────────────────────
   const topCard =
     safe(() => document.querySelector('main h1')?.closest('section')) ||
     document.body;
@@ -139,22 +299,15 @@
     return out;
   }
 
-  function parseSkills() {
-    const seen = new Set();
-    const out = [];
-    for (const li of sectionItems('skills')) {
-      const s = vis(safe(() => li.querySelector('.t-bold')));
-      const key = (s || '').toLowerCase();
-      if (s && !seen.has(key)) {
-        seen.add(key);
-        out.push(s);
-      }
-    }
-    return out;
-  }
+  const parseSkills = () =>
+    uniq(
+      sectionItems('skills')
+        .map((li) => vis(safe(() => li.querySelector('.t-bold'))))
+        .filter(Boolean),
+    );
 
-  function parseLanguages() {
-    return sectionItems('languages')
+  const parseLanguages = () =>
+    sectionItems('languages')
       .map((li) => {
         const { bold, normals, lights } = entityParts(li);
         if (!bold) return null;
@@ -162,10 +315,9 @@
         return proficiency ? `${bold} — ${proficiency}` : bold;
       })
       .filter(Boolean);
-  }
 
-  function parseCertifications() {
-    return sectionItems('licenses_and_certifications')
+  const parseCertifications = () =>
+    sectionItems('licenses_and_certifications')
       .map((li) => {
         const { bold, normals, lights } = entityParts(li);
         if (!bold) return null;
@@ -176,19 +328,23 @@
         });
       })
       .filter(Boolean);
-  }
 
-  // ── top card ──────────────────────────────────────────────────────────────
-  const name = clean(safe(() => document.querySelector('main h1')?.textContent));
-  const headline = clean(
+  const domName = clean(safe(() => document.querySelector('main h1')?.textContent));
+  const domHeadline = clean(
     safe(() => topCard.querySelector('.text-body-medium.break-words')?.textContent),
   );
-  const locationText = clean(
+  const domLocation = clean(
     safe(
       () =>
         topCard.querySelector(
           'span.text-body-small.inline.t-black--light.break-words',
         )?.textContent,
+    ),
+  );
+  const domAbout = safe(() =>
+    vis(sectionFor('about')?.querySelector('.inline-show-more-text'))?.replace(
+      /…?\s*see more$/i,
+      '',
     ),
   );
   const avatar_url = safe(() => {
@@ -227,37 +383,45 @@
       ? true
       : undefined;
 
-  // First/last from a plain "First Rest…" split; skipped for single-word names.
-  let first_name;
-  let last_name;
-  if (name && name.includes(' ')) {
+  // ── merge ─────────────────────────────────────────────────────────────────
+  // Voyager wins on identity/text fields (clean names, untruncated about);
+  // for lists, take whichever source read more entries (Voyager on ties —
+  // its entries carry proper dates).
+  const voy = safe(voyagerScrape) || {};
+  const pickList = (voyList, domFn) => {
+    const dom = safe(domFn) || [];
+    return (voy[voyList]?.length || 0) >= dom.length ? voy[voyList] || [] : dom;
+  };
+
+  const experience = pickList('experience', parseExperience);
+  const name = voy.name || domName;
+  let { first_name, last_name } = voy;
+  if (!first_name && name && name.includes(' ')) {
     const parts = name.split(' ');
     first_name = parts[0];
     last_name = parts.slice(1).join(' ');
   }
 
-  const experience = safe(parseExperience) || [];
   // Only call the top entry "current" when its dates say so.
   const top = experience[0];
   const isCurrent = top && /present|heden/i.test(top.date_range || '');
-  const current_title = isCurrent ? top.title : undefined;
-  const current_company = isCurrent ? top.company : undefined;
 
   const profile = strip({
     name,
     first_name,
     last_name,
     linkedin_url: window.location.href,
-    headline,
-    location: locationText,
-    current_title,
-    current_company,
-    about: vis(safe(() => sectionFor('about')?.querySelector('.inline-show-more-text'))),
+    headline: voy.headline || domHeadline,
+    location: voy.location || domLocation,
+    current_title: isCurrent ? top.title : undefined,
+    current_company: isCurrent ? top.company : undefined,
+    about: voy.about || domAbout,
+    industry: voy.industry,
     experience,
-    education: safe(parseEducation) || [],
-    skills: safe(parseSkills) || [],
-    languages: safe(parseLanguages) || [],
-    certifications: safe(parseCertifications) || [],
+    education: pickList('education', parseEducation),
+    skills: pickList('skills', parseSkills),
+    languages: pickList('languages', parseLanguages),
+    certifications: pickList('certifications', parseCertifications),
     open_to_work,
     connection_degree,
     followers,

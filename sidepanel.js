@@ -575,6 +575,8 @@ const stageSelect       = document.getElementById('stageSelect');
 const notesEl           = document.getElementById('candidateNotes');
 const exportBtn         = document.getElementById('exportBtn');
 const exportResult      = document.getElementById('exportResult');
+const scrapeSummaryEl   = document.getElementById('scrapeSummary');
+const rescanLink        = document.getElementById('rescanLink');
 
 let currentMode = null; // 'chat' | 'profile' | 'none'
 let profileState = {
@@ -687,6 +689,57 @@ async function refreshMode() {
   await initProfileMode(tab, url);
 }
 
+// ── profile scrape ─────────────────────────────────────────────────────────
+async function scrapeProfile(tabId) {
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['profile.js'],
+    });
+    return result;
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+// One line of truth about what the scrape actually read, so a thin export
+// is visible before it happens.
+function scrapeSummaryText(p) {
+  const flag = (label, v) => `${label} ${v ? '✓' : '—'}`;
+  return [
+    flag('bio', p.about),
+    flag('role', p.current_title),
+    `exp ${p.experience?.length || 0}`,
+    `edu ${p.education?.length || 0}`,
+    `skills ${p.skills?.length || 0}`,
+  ].join(' · ');
+}
+
+function renderProfileHeader() {
+  const p = profileState.scraped || {};
+  const slug = (profileState.url || '').match(/\/in\/([^/?#]+)/)?.[1] || '';
+  profileNameEl.textContent = p.name || decodeURIComponent(slug) || 'Unknown profile';
+  profileHeadlineEl.textContent =
+    p.headline ||
+    [p.current_title, p.current_company].filter(Boolean).join(' @ ') ||
+    '';
+  scrapeSummaryEl.textContent = scrapeSummaryText(p);
+}
+
+async function rescanProfile(e) {
+  e?.preventDefault();
+  const tab = await getActiveTab();
+  if (!tab?.id || (tab.url || '') !== profileState.url) return;
+  scrapeSummaryEl.textContent = 'rescanning…';
+  const result = await scrapeProfile(tab.id);
+  if ((tab.url || '') !== profileState.url) return;
+  profileState.scraped = result?.profile || {};
+  renderProfileHeader();
+  setStatus(result?.ok ? 'Profile rescanned.' : 'Rescan still found no name — is the profile fully loaded?', result?.ok ? 'ok' : 'warn');
+}
+
+rescanLink.addEventListener('click', rescanProfile);
+
 // ── profile mode init ──────────────────────────────────────────────────────
 async function initProfileMode(tab, url) {
   // Re-entrancy: skip when this URL is already loading or fully loaded, but
@@ -704,6 +757,7 @@ async function initProfileMode(tab, url) {
 
   profileNameEl.textContent = 'Loading profile…';
   profileHeadlineEl.textContent = '';
+  scrapeSummaryEl.textContent = '';
   pipelineBanner.classList.add('hidden');
   pipelineBanner.textContent = '';
   exportBtn.disabled = true;
@@ -717,33 +771,28 @@ async function initProfileMode(tab, url) {
   stageSelect.innerHTML = '';
   stageSelect.disabled = true;
 
-  // Scrape and both API calls run in parallel.
-  const scrapeP = (async () => {
-    try {
-      const [{ result }] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ['profile.js'],
-      });
-      return result;
-    } catch (e) {
-      return { ok: false, error: e.message };
-    }
-  })();
+  // Scrape and both API calls run in parallel. profile.js itself waits for
+  // the profile to render (LinkedIn paints lazily / navigates as an SPA).
+  const scrapeP = scrapeProfile(tab.id);
   const rolesP = brainApi('/api/extension/recruitment/roles');
   const lookupP = brainApi(
     '/api/extension/recruitment/candidates/lookup?linkedin_url=' + encodeURIComponent(url),
   );
 
-  const scraped = await scrapeP;
+  let scraped = await scrapeP;
   if (profileState.url !== url) return; // navigated away meanwhile
+  if (!scraped?.ok) {
+    // One more shot after a beat — the page may have finished rendering since.
+    await new Promise((r) => setTimeout(r, 1500));
+    if (profileState.url !== url) return;
+    scraped = await scrapeProfile(tab.id);
+    if (profileState.url !== url) return;
+  }
   profileState.scraped = scraped?.profile || {};
-  const slug = url.match(/\/in\/([^/?#]+)/)?.[1] || '';
-  profileNameEl.textContent =
-    profileState.scraped.name || decodeURIComponent(slug) || 'Unknown profile';
-  profileHeadlineEl.textContent = profileState.scraped.headline || '';
+  renderProfileHeader();
   if (!scraped?.ok) {
     setStatus(
-      'Could not read a name off this profile — LinkedIn DOM may have changed. Export will send whatever was scraped.',
+      'Could not read a name off this profile — try “rescan” once the page has fully loaded. Export sends whatever was scraped.',
       'warn',
     );
   }

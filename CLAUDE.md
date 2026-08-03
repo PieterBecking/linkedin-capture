@@ -28,6 +28,7 @@ Chat capture:
 Recruitment export:
 
 - `profile.js` injected on demand, same pattern as `content.js`. Returns `{ ok, profile }`; every selector is wrapped so DOM churn yields missing keys, never a thrown error. Values that can't be read are omitted, not guessed (email/phone are behind the contact-info overlay and deliberately not scraped).
+- `profile.js` merges two sources: the visible DOM and LinkedIn's embedded Voyager JSON (`<code>` blobs with `"included"` arrays; profile entity matched by `publicIdentifier === slug` so SPA transitions can't leak the previous profile). Voyager wins on identity/text fields, the longer list wins per section. It awaits render (top-card `h1` agreeing with `document.title`, ≤4s) because LinkedIn paints lazily; the panel retries once and has a "rescan" link.
 - Auth: the Brain session cookie, nothing else — every call goes out with `credentials: 'include'`. There is NO extension token (the server-side one was deleted Aug 2026). `401` = signed out of brain.servo7.com in this browser (show a sign-in link, never call it a config problem); `403` = signed in but missing the `recruitment` permission; `400` = payload problem, show `detail` verbatim.
 - Endpoints (all under `https://brain.servo7.com`, fixed server-side):
   - `GET /api/extension/ping` — options-page connection test.

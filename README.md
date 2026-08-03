@@ -47,13 +47,13 @@ Chat-capture settings are stored via `chrome.storage.local`; the recruitment bas
 | `background.js` | Service worker. Sets `openPanelOnActionClick`, and proxies all recruitment API calls (`{ type: 'brainApi' }` messages) with `credentials: "include"` so the Brain session cookie rides along. |
 | `sidepanel.html` / `sidepanel.css` / `sidepanel.js` | Side panel UI. Chat mode: capture button, meeting-name input with `#` / `@` mentions, conversation preview, save button. Profile mode: scraped name/headline, role + stage dropdowns, notes, export button, already-in-pipeline banner. |
 | `content.js` | Injected on demand into a messaging tab. Scrapes `.msg-s-message-list-content` and returns `{ url, threadId, threadTitle, messages: [{sender, text, timestamp}] }`. |
-| `profile.js` | Injected on demand into a profile tab. Returns `{ ok, profile }` with everything readable off the profile; unreadable fields are omitted. |
+| `profile.js` | Injected on demand into a profile tab. Waits for the profile to render, then merges the visible DOM with LinkedIn's embedded Voyager JSON (matched to the URL slug) and returns `{ ok, profile }`; unreadable fields are omitted. |
 | `options.html` / `options.js` | Settings page: CRM URL + internal token (chat capture) and server URL + extension token (recruitment export). |
 
 ## Notes on the LinkedIn DOM
 
 LinkedIn ships UI churn, so `content.js` queries on the stable-ish class prefixes (`msg-s-message-list-content`, `msg-s-message-group__name`, `msg-s-event-listitem__body`). If LinkedIn renames these, the scraper returns zero messages and the side panel surfaces a warning — fix the selectors in `content.js` and reload the extension.
 
-`profile.js` leans on `main h1` (name), the section anchor ids (`about`, `experience`, `education`, `skills`, `languages`, `licenses_and_certifications`) and the `t-bold` / `t-14 t-normal` / `t-black--light` text classes. Every read is wrapped, so churn there degrades to missing keys in the export rather than a failure.
+`profile.js` reads two sources and merges them: the visible DOM (`main h1`, the section anchor ids `about` / `experience` / `education` / `skills` / `languages` / `licenses_and_certifications`, and the `t-bold` / `t-14 t-normal` / `t-black--light` text classes) and the Voyager JSON payloads LinkedIn embeds in `<code>` elements, matched to the URL slug so SPA navigation can't attribute a previous profile's data. It waits up to ~4s for the top card to render before scraping; the side panel retries once and offers a manual **rescan** link. Every read is wrapped, so churn degrades to missing keys in the export rather than a failure.
 
 Only messages currently rendered in the DOM are captured. Scroll the thread up to load earlier history before clicking **Capture**.
