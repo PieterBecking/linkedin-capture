@@ -157,6 +157,31 @@ html, body {
   overflow: auto;
 }
 
+.profile-name { font-weight: 600; font-size: 15px; }
+
+.select-input,
+.notes-input {
+  background: #1c1c1e;
+  border: 1px solid #2c2c2e;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #f0f0f0;
+  font-size: 13px;
+  outline: none;
+  width: 100%;
+}
+.select-input:focus,
+.notes-input:focus { border-color: #48484a; }
+.select-input:disabled { opacity: 0.5; }
+.notes-input {
+  resize: vertical;
+  min-height: 60px;
+  font-family: inherit;
+}
+
+.status a,
+.meta a { color: #b0c0ff; }
+
 .suggest-popover {
   position: fixed;
   background: #1c1c1e;

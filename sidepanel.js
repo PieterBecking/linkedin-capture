@@ -14,6 +14,16 @@ const LEGACY_CRM_URL = 'https://crm.becking.dev';
 const LINKEDIN_THREAD_RE =
   /^https:\/\/www\.linkedin\.com\/messaging\/(thread\/|compose[/?])/;
 
+// Mode routing: /messaging/… keeps the chat-capture UI; /in/<slug> (any
+// linkedin subdomain, trailing paths like /en, ?originalSubdomain=nl) gets
+// the recruitment profile-export UI; anything else gets neither.
+const LINKEDIN_MESSAGING_RE =
+  /^https:\/\/([a-z0-9-]+\.)*linkedin\.com\/messaging([/?#]|$)/i;
+const LINKEDIN_PROFILE_RE =
+  /^https:\/\/([a-z0-9-]+\.)*linkedin\.com\/in\/[^/?#]+/i;
+
+const DEFAULT_BRAIN_URL = 'https://brain.servo7.com';
+
 // ── settings ────────────────────────────────────────────────────────────────
 async function getSettings() {
   const { crmUrl, internalToken } = await chrome.storage.local.get([
@@ -547,6 +557,341 @@ openOpts.addEventListener('click', (e) => {
   chrome.runtime.openOptionsPage();
 });
 
+// ═══ profile mode (recruitment export) ══════════════════════════════════════
+// Chat capture above is untouched. Everything below routes the panel between
+// the two modes and drives the candidate export. All API calls go through the
+// background worker ({ type: 'brainApi' }) — the server sends no CORS headers,
+// and the X-Extension-Token must stay out of page contexts.
+
+const captureCard       = document.getElementById('captureCard');
+const profileCard       = document.getElementById('profileCard');
+const profileNameEl     = document.getElementById('profileName');
+const profileHeadlineEl = document.getElementById('profileHeadline');
+const pipelineBanner    = document.getElementById('pipelineBanner');
+const roleSelect        = document.getElementById('roleSelect');
+const stageSelect       = document.getElementById('stageSelect');
+const notesEl           = document.getElementById('candidateNotes');
+const exportBtn         = document.getElementById('exportBtn');
+const exportResult      = document.getElementById('exportResult');
+
+let currentMode = null; // 'chat' | 'profile' | 'none'
+let profileState = {
+  url: null,       // tab URL this state belongs to
+  scraped: {},     // profile payload from profile.js
+  roles: [],       // roles from the API (needed to send role_id in its original type)
+  base: DEFAULT_BRAIN_URL,
+  rolesReady: false,
+  loading: false,
+  exporting: false,
+};
+
+function brainApi(path, opts = {}) {
+  return chrome.runtime
+    .sendMessage({ type: 'brainApi', path, ...opts })
+    .then((resp) => resp || { ok: false, status: 0, error: 'No response from background worker.' })
+    .catch((e) => ({ ok: false, status: 0, error: e.message }));
+}
+
+async function getBrainBase() {
+  const { extBaseUrl } = await chrome.storage.sync.get(['extBaseUrl']);
+  return (extBaseUrl || DEFAULT_BRAIN_URL).replace(/\/+$/, '');
+}
+
+function detectMode(url) {
+  if (LINKEDIN_PROFILE_RE.test(url || '')) return 'profile';
+  if (LINKEDIN_MESSAGING_RE.test(url || '')) return 'chat';
+  return 'none';
+}
+
+function applyModeVisibility(mode) {
+  captureCard.classList.toggle('hidden', mode !== 'chat');
+  profileCard.classList.toggle('hidden', mode !== 'profile');
+  if (mode === 'chat') {
+    if (captured) formCard.classList.remove('hidden');
+  } else {
+    formCard.classList.add('hidden');
+  }
+}
+
+async function refreshMode() {
+  const tab = await getActiveTab();
+  const url = tab?.url || '';
+  const mode = detectMode(url);
+  const prevMode = currentMode;
+  const modeChanged = mode !== prevMode;
+  currentMode = mode;
+  applyModeVisibility(mode);
+
+  if (mode === 'none') {
+    if (modeChanged) {
+      setStatus(
+        'Nothing to capture here. Open a LinkedIn message thread (/messaging/) or a profile (/in/<name>).',
+        'warn',
+      );
+    }
+    return;
+  }
+  // Clear stale mode-switch messages, but keep whatever init() just said.
+  if (modeChanged && prevMode !== null) setStatus('');
+
+  if (mode === 'chat') {
+    if (modeChanged && !LINKEDIN_THREAD_RE.test(url)) {
+      captureMeta.textContent =
+        'Open a LinkedIn message thread or compose overlay to capture.';
+      captureMeta.classList.remove('hidden');
+    }
+    return;
+  }
+  await initProfileMode(tab, url);
+}
+
+// ── profile mode init ──────────────────────────────────────────────────────
+async function initProfileMode(tab, url) {
+  // Re-entrancy: skip when this URL is already loading or fully loaded, but
+  // retry after a failed roles fetch (e.g. token added, tab revisited).
+  if (profileState.url === url && (profileState.loading || profileState.rolesReady)) return;
+  profileState = {
+    url,
+    scraped: {},
+    roles: [],
+    base: await getBrainBase(),
+    rolesReady: false,
+    loading: true,
+    exporting: false,
+  };
+
+  profileNameEl.textContent = 'Loading profile…';
+  profileHeadlineEl.textContent = '';
+  pipelineBanner.classList.add('hidden');
+  pipelineBanner.textContent = '';
+  exportBtn.disabled = true;
+  exportBtn.classList.add('primary');
+  exportResult.classList.add('hidden');
+  exportResult.textContent = '';
+  notesEl.value = '';
+  roleSelect.innerHTML = '';
+  roleSelect.appendChild(new Option('Loading roles…', ''));
+  roleSelect.disabled = true;
+  stageSelect.innerHTML = '';
+  stageSelect.disabled = true;
+
+  // Scrape and both API calls run in parallel.
+  const scrapeP = (async () => {
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['profile.js'],
+      });
+      return result;
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  })();
+  const rolesP = brainApi('/api/extension/recruitment/roles');
+  const lookupP = brainApi(
+    '/api/extension/recruitment/candidates/lookup?linkedin_url=' + encodeURIComponent(url),
+  );
+
+  const scraped = await scrapeP;
+  if (profileState.url !== url) return; // navigated away meanwhile
+  profileState.scraped = scraped?.profile || {};
+  const slug = url.match(/\/in\/([^/?#]+)/)?.[1] || '';
+  profileNameEl.textContent =
+    profileState.scraped.name || decodeURIComponent(slug) || 'Unknown profile';
+  profileHeadlineEl.textContent = profileState.scraped.headline || '';
+  if (!scraped?.ok) {
+    setStatus(
+      'Could not read a name off this profile — LinkedIn DOM may have changed. Export will send whatever was scraped.',
+      'warn',
+    );
+  }
+
+  const rolesResp = await rolesP;
+  if (profileState.url !== url) return;
+  renderRoles(rolesResp);
+
+  const lookupResp = await lookupP;
+  if (profileState.url !== url) return;
+  renderLookup(lookupResp);
+  profileState.loading = false;
+}
+
+// ── roles + stages ─────────────────────────────────────────────────────────
+function normStage(s) {
+  if (s == null) return null;
+  if (typeof s === 'string') return { value: s, label: s };
+  const value = s.value ?? s.id ?? s.key ?? s.stage ?? s.name;
+  if (value == null) return null;
+  const label = s.label ?? s.title ?? s.name ?? String(value);
+  return { value, label };
+}
+
+function renderRoles(resp) {
+  const data = resp?.data;
+  if (!resp?.ok || !Array.isArray(data?.roles)) {
+    // Never export against a stale role list: surface the error, disable.
+    const why =
+      resp?.error ||
+      `HTTP ${resp?.status ?? '?'}${data?.detail ? `: ${typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)}` : ''}`;
+    roleSelect.innerHTML = '';
+    roleSelect.appendChild(new Option('Roles unavailable', ''));
+    roleSelect.disabled = true;
+    stageSelect.disabled = true;
+    exportBtn.disabled = true;
+    profileState.rolesReady = false;
+    profileState.loading = false;
+    setStatus(`Could not load roles: ${why}`, 'err');
+    return;
+  }
+
+  profileState.roles = data.roles;
+  roleSelect.innerHTML = '';
+  roleSelect.disabled = false;
+
+  const defaultId = data.default_role_id;
+  const hasDefault =
+    defaultId != null && data.roles.some((r) => String(r.id) === String(defaultId));
+  if (!hasDefault) {
+    // default_role_id null (or dangling): leave unselected, require a pick.
+    roleSelect.appendChild(new Option('Select a role…', ''));
+  }
+  for (const r of data.roles) {
+    const label = r.is_open === false ? `${r.title} (closed)` : r.title;
+    roleSelect.appendChild(new Option(label, String(r.id)));
+  }
+  if (hasDefault) roleSelect.value = String(defaultId);
+
+  const stages = (Array.isArray(data.stages) ? data.stages : [])
+    .map(normStage)
+    .filter(Boolean);
+  const stageList = stages.length ? stages : [{ value: 'SOURCED', label: 'SOURCED' }];
+  stageSelect.innerHTML = '';
+  stageSelect.disabled = false;
+  for (const s of stageList) stageSelect.appendChild(new Option(s.label, String(s.value)));
+  const sourced = stageList.find((s) => String(s.value).toUpperCase() === 'SOURCED');
+  if (sourced) stageSelect.value = String(sourced.value);
+
+  exportBtn.disabled = false;
+  profileState.rolesReady = true;
+}
+
+// ── pipeline lookup banner ─────────────────────────────────────────────────
+function renderLookup(resp) {
+  if (!resp?.ok || !resp.data?.found) return; // not found / lookup failed: keep primary flow
+  const apps = Array.isArray(resp.data.applications) ? resp.data.applications : [];
+
+  pipelineBanner.textContent = '';
+  apps.forEach((app, i) => {
+    if (i > 0) pipelineBanner.appendChild(document.createTextNode(' · '));
+    const stage = app.stage_label ?? app.stage ?? '?';
+    const role = app.role_title ?? app.role?.title ?? (typeof app.role === 'string' ? app.role : '?');
+    const text = `already in pipeline — ${stage} for ${role}`;
+    if (app.url) {
+      const a = document.createElement('a');
+      a.href = /^https?:/.test(app.url) ? app.url : profileState.base + app.url;
+      a.target = '_blank';
+      a.rel = 'noreferrer';
+      a.textContent = text;
+      pipelineBanner.appendChild(a);
+    } else {
+      pipelineBanner.appendChild(document.createTextNode(text));
+    }
+  });
+  if (!apps.length) pipelineBanner.textContent = 'Already in pipeline.';
+  pipelineBanner.classList.remove('hidden');
+  exportBtn.classList.remove('primary'); // demote: re-export is the secondary action
+}
+
+// ── export ─────────────────────────────────────────────────────────────────
+async function exportToPipeline() {
+  if (profileState.exporting) return;
+  const roleValue = roleSelect.value;
+  if (!roleValue) {
+    setStatus('Pick a role first.', 'warn');
+    return;
+  }
+  const role = profileState.roles.find((r) => String(r.id) === roleValue);
+  const stage = stageSelect.value;
+  const notes = notesEl.value.trim();
+
+  // Full scrape payload: mapped columns + everything else as extra top-level
+  // keys, stored verbatim server-side. linkedin_url goes as-is.
+  const body = {
+    ...profileState.scraped,
+    linkedin_url: profileState.scraped.linkedin_url || profileState.url,
+    role_id: role ? role.id : roleValue,
+    stage,
+  };
+  if (notes) body.notes = notes;
+
+  profileState.exporting = true;
+  exportBtn.disabled = true;
+  exportBtn.textContent = 'Exporting…';
+  exportResult.classList.add('hidden');
+  setStatus('');
+  try {
+    const resp = await brainApi('/api/extension/recruitment/candidates', {
+      method: 'POST',
+      body,
+    });
+    if (!resp.ok) {
+      const detail = resp.data?.detail;
+      const detailText =
+        detail == null ? '' : typeof detail === 'string' ? detail : JSON.stringify(detail);
+      const msg =
+        resp.status === 400 && detailText
+          ? detailText
+          : resp.error || `HTTP ${resp.status}${detailText ? `: ${detailText}` : ''}`;
+      setStatus(`Export failed: ${msg}`, 'err');
+      return;
+    }
+
+    const d = resp.data || {};
+    const name = d.name || profileState.scraped.name || 'Candidate';
+    const roleTitle = role?.title || roleSelect.selectedOptions[0]?.textContent || '';
+    const stageLabel = stageSelect.selectedOptions[0]?.textContent || stage;
+
+    exportResult.textContent = '';
+    exportResult.appendChild(
+      document.createTextNode(`${name} — ${roleTitle} · ${stageLabel} `),
+    );
+    if (d.url) {
+      const a = document.createElement('a');
+      a.href = /^https?:/.test(d.url) ? d.url : profileState.base + d.url;
+      a.target = '_blank';
+      a.rel = 'noreferrer';
+      a.textContent = 'View candidate';
+      exportResult.appendChild(a);
+    }
+    exportResult.classList.remove('hidden');
+    setStatus(
+      d.already_in_pipeline
+        ? 'Candidate was already in the pipeline — details refreshed.'
+        : 'Candidate added to the pipeline.',
+      'ok',
+    );
+
+    // Refresh the banner so the panel reflects the new pipeline state.
+    const lookup = await brainApi(
+      '/api/extension/recruitment/candidates/lookup?linkedin_url=' +
+        encodeURIComponent(profileState.url),
+    );
+    renderLookup(lookup);
+  } finally {
+    profileState.exporting = false;
+    exportBtn.disabled = false;
+    exportBtn.textContent = 'Export to pipeline';
+  }
+}
+
+exportBtn.addEventListener('click', exportToPipeline);
+
+// Re-route when the user switches tabs or the SPA changes the URL.
+chrome.tabs.onActivated.addListener(() => refreshMode());
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (tab?.active && (changeInfo.url || changeInfo.status === 'complete')) refreshMode();
+});
+
 // ── boot ───────────────────────────────────────────────────────────────────
 (async function init() {
   dateEl.value = todayStr();
@@ -557,9 +902,5 @@ openOpts.addEventListener('click', (e) => {
     loadManifest(); // fire and forget; popover falls back to freeform
   }
 
-  const tab = await getActiveTab();
-  if (tab && !LINKEDIN_THREAD_RE.test(tab.url || '')) {
-    captureMeta.textContent = 'Open a LinkedIn message thread or compose overlay to capture.';
-    captureMeta.classList.remove('hidden');
-  }
+  await refreshMode();
 })();

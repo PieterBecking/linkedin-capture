@@ -17,9 +17,35 @@
 
     <section id="status" class="status hidden"></section>
 
-    <section class="card">
+    <section id="captureCard" class="card">
       <button id="captureBtn" class="btn primary">Capture this thread</button>
       <div id="captureMeta" class="meta hidden"></div>
+    </section>
+
+    <section id="profileCard" class="card hidden">
+      <div>
+        <div id="profileName" class="profile-name"></div>
+        <div id="profileHeadline" class="meta"></div>
+      </div>
+
+      <div id="pipelineBanner" class="status warn hidden"></div>
+
+      <label class="field-label">Role</label>
+      <select id="roleSelect" class="select-input"></select>
+
+      <label class="field-label">Stage</label>
+      <select id="stageSelect" class="select-input"></select>
+
+      <label class="field-label">Notes</label>
+      <textarea
+        id="candidateNotes"
+        class="notes-input"
+        rows="3"
+        placeholder="Optional notes for the pipeline…"
+      ></textarea>
+
+      <button id="exportBtn" class="btn primary">Export to pipeline</button>
+      <div id="exportResult" class="meta hidden"></div>
     </section>
 
     <section id="formCard" class="card hidden">
