@@ -13,12 +13,29 @@ Author commits as `PieterBecking <ph.becking@gmail.com>`. Never co-author as Cla
 
 ## Project overview
 
-MV3 Chrome extension. Captures an open LinkedIn message thread DOM and posts it as a meeting note to the Servo7 CRM (`/api/notes`), using the same `#company` / `@person` mention model as the notes app at `/opt/projects/notes`.
+MV3 Chrome extension with two side-panel modes, routed off the active tab URL (`detectMode` in `sidepanel.js`):
+
+1. **Chat capture** (`/messaging/…`): captures an open LinkedIn message thread DOM and posts it as a meeting note to the Servo7 CRM (`/api/notes`), using the same `#company` / `@person` mention model as the notes app at `/opt/projects/notes`.
+2. **Recruitment export** (`/in/<slug>`, any linkedin subdomain): scrapes the candidate profile (`profile.js`) and exports it to the recruitment pipeline.
+
+Chat capture:
 
 - Side panel = UI (mention popover + preview + save).
 - `content.js` is injected on demand via `chrome.scripting.executeScript` — it's NOT registered as a static content script in the manifest. It returns the last expression (an IIFE result) so `executeScript` resolves to the scrape result.
 - Auth to CRM uses `X-Internal-Token` (the CRM's `INTERNAL_API_TOKEN`), stored in `chrome.storage.local` via the options page.
 - Notes are upserted by `external_id = linkedin:<threadId>`.
+
+Recruitment export:
+
+- `profile.js` injected on demand, same pattern as `content.js`. Returns `{ ok, profile }`; every selector is wrapped so DOM churn yields missing keys, never a thrown error. Values that can't be read are omitted, not guessed (email/phone are behind the contact-info overlay and deliberately not scraped).
+- Auth: the Brain session cookie, nothing else — every call goes out with `credentials: 'include'`. There is NO extension token (the server-side one was deleted Aug 2026). `401` = signed out of brain.servo7.com in this browser (show a sign-in link, never call it a config problem); `403` = signed in but missing the `recruitment` permission; `400` = payload problem, show `detail` verbatim.
+- Endpoints (all under `https://brain.servo7.com`, fixed server-side):
+  - `GET /api/extension/ping` — options-page connection test.
+  - `GET /api/extension/recruitment/roles` → `{ roles: [{id, title, is_open}], stages, default_role_id }`. `default_role_id: null` → force a manual pick; closed roles listed with "(closed)". Roles fetch failure disables export — never fall back to a hard-coded list.
+  - `GET /api/extension/recruitment/candidates/lookup?linkedin_url=…` → `{ found, applications: [{url, stage_label, role_title}] }` drives the "already in pipeline" banner and demotes the export button to secondary.
+  - `POST /api/extension/recruitment/candidates` — full scrape + `role_id`/`stage`/`notes`. `already_in_pipeline: true` in the response = refreshed, not newly added. 400 `detail` is shown verbatim.
+- ALL recruitment fetches go through the background worker (`{ type: 'brainApi' }` message to `background.js`) — the server sends no CORS headers, and `host_permissions` on `brain.servo7.com` is what makes worker fetches legal and cookie-bearing. Never fetch from a content script.
+- The only recruitment setting is the base URL (`extBaseUrl`, `chrome.storage.sync`); chat-capture settings stay in `chrome.storage.local`. Don't mix them.
 
 ## Selectors that may rot
 

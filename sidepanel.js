@@ -561,7 +561,9 @@ openOpts.addEventListener('click', (e) => {
 // Chat capture above is untouched. Everything below routes the panel between
 // the two modes and drives the candidate export. All API calls go through the
 // background worker ({ type: 'brainApi' }) — the server sends no CORS headers,
-// and the X-Extension-Token must stay out of page contexts.
+// and worker fetches are what carry the Brain session cookie. There is no
+// extension-side credential: 401 means signed out of Brain, 403 means the
+// signed-in account lacks the recruitment permission.
 
 const captureCard       = document.getElementById('captureCard');
 const profileCard       = document.getElementById('profileCard');
@@ -595,6 +597,46 @@ function brainApi(path, opts = {}) {
 async function getBrainBase() {
   const { extBaseUrl } = await chrome.storage.sync.get(['extBaseUrl']);
   return (extBaseUrl || DEFAULT_BRAIN_URL).replace(/\/+$/, '');
+}
+
+// Like setStatus, but with a clickable link in the middle of the message.
+function setStatusLink(before, level, linkText, href, after) {
+  statusEl.textContent = '';
+  statusEl.appendChild(document.createTextNode(before));
+  const a = document.createElement('a');
+  a.href = href;
+  a.target = '_blank';
+  a.rel = 'noreferrer';
+  a.textContent = linkText;
+  statusEl.appendChild(a);
+  if (after) statusEl.appendChild(document.createTextNode(after));
+  statusEl.classList.remove('hidden', 'ok', 'err', 'warn');
+  if (level) statusEl.classList.add(level);
+}
+
+// Shared error rendering for the recruitment API. 401 = signed out of Brain
+// (a sign-in fixes it, nothing else does), 403 = missing recruitment
+// permission, 400 = payload problem whose detail is shown verbatim.
+function showApiError(prefix, resp) {
+  if (resp?.status === 401) {
+    setStatusLink(`${prefix}: you're signed out of Brain. `, 'err', 'Sign in to Brain', profileState.base, ' and retry.');
+    return;
+  }
+  if (resp?.status === 403) {
+    setStatus(`${prefix}: your Brain account doesn't have the recruitment permission.`, 'err');
+    return;
+  }
+  const detail = resp?.data?.detail;
+  const detailText =
+    detail == null ? '' : typeof detail === 'string' ? detail : JSON.stringify(detail);
+  if (resp?.status === 400 && detailText) {
+    setStatus(`${prefix}: ${detailText}`, 'err');
+    return;
+  }
+  setStatus(
+    `${prefix}: ${resp?.error || `HTTP ${resp?.status ?? '?'}${detailText ? `: ${detailText}` : ''}`}`,
+    'err',
+  );
 }
 
 function detectMode(url) {
@@ -730,9 +772,6 @@ function renderRoles(resp) {
   const data = resp?.data;
   if (!resp?.ok || !Array.isArray(data?.roles)) {
     // Never export against a stale role list: surface the error, disable.
-    const why =
-      resp?.error ||
-      `HTTP ${resp?.status ?? '?'}${data?.detail ? `: ${typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)}` : ''}`;
     roleSelect.innerHTML = '';
     roleSelect.appendChild(new Option('Roles unavailable', ''));
     roleSelect.disabled = true;
@@ -740,7 +779,7 @@ function renderRoles(resp) {
     exportBtn.disabled = true;
     profileState.rolesReady = false;
     profileState.loading = false;
-    setStatus(`Could not load roles: ${why}`, 'err');
+    showApiError('Could not load roles', resp);
     return;
   }
 
@@ -835,14 +874,7 @@ async function exportToPipeline() {
       body,
     });
     if (!resp.ok) {
-      const detail = resp.data?.detail;
-      const detailText =
-        detail == null ? '' : typeof detail === 'string' ? detail : JSON.stringify(detail);
-      const msg =
-        resp.status === 400 && detailText
-          ? detailText
-          : resp.error || `HTTP ${resp.status}${detailText ? `: ${detailText}` : ''}`;
-      setStatus(`Export failed: ${msg}`, 'err');
+      showApiError('Export failed', resp);
       return;
     }
 
