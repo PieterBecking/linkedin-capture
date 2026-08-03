@@ -690,13 +690,26 @@ async function refreshMode() {
 }
 
 // ── profile scrape ─────────────────────────────────────────────────────────
+// Injected into ALL frames: some LinkedIn builds render the profile in a
+// subframe, leaving the top document an empty shell. Each frame scrapes
+// independently; keep the richest result.
 async function scrapeProfile(tabId) {
   try {
-    const [{ result }] = await chrome.scripting.executeScript({
-      target: { tabId },
+    const frames = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
       files: ['profile.js'],
     });
-    return result;
+    const results = frames.map((f) => f?.result).filter(Boolean);
+    if (results.length > 1) console.warn('[linkedin-capture] frame results', results);
+    const score = (r) => {
+      let s = Object.keys(r.profile || {}).length;
+      if (r.ok) s += 100;
+      s += (r.profile?.experience?.length || 0) + (r.profile?.skills?.length || 0);
+      if (r.profile?.about) s += 5;
+      return s;
+    };
+    results.sort((a, b) => score(b) - score(a));
+    return results[0] || { ok: false, error: 'no frame returned a result' };
   } catch (e) {
     return { ok: false, error: e.message };
   }
@@ -725,7 +738,8 @@ function scrapeDebugText(result) {
   if (!d) return result?.error || 'no debug info';
   return (
     `api=${d.api} · name=${d.nameSource} · blobs=${d.embeddedBlobs} · ` +
-    `h1=${d.vouchedH1 ? 'yes' : 'no'}/${d.h1s} · shadow=${d.shadowRoots} · title="${d.title || ''}"`
+    `h1=${d.vouchedH1 ? 'yes' : 'no'}/${d.h1s} · shadow=${d.shadowRoots} · ` +
+    `frame=${d.top ? 'top' : d.frame || 'sub'} · title="${d.title || ''}"`
   );
 }
 

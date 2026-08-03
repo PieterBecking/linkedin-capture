@@ -90,14 +90,20 @@
     return out;
   };
 
-  const slug = safe(() =>
-    decodeURIComponent(location.pathname.match(/\/in\/([^/?#]+)/)[1]),
-  );
+  // This script may be running in a subframe (LinkedIn renders some builds
+  // that way): the slug and tab title live on the top document, which is
+  // same-origin and reachable — fall back to it.
+  const slugFrom = (path) =>
+    safe(() => decodeURIComponent(path.match(/\/in\/([^/?#]+)/)[1]));
+  const slug =
+    slugFrom(location.pathname) ||
+    safe(() => slugFrom(window.top.location.pathname));
 
   // The tab title names the person being viewed: "(3) Jane Doe | LinkedIn".
-  const titleName = clean(
-    safe(() => document.title.match(/^\(?\d*\)?\s*(.+?)\s*[|–-]\s*LinkedIn/)?.[1]),
-  );
+  const parseTitle = (t) =>
+    clean(safe(() => t.match(/^\(?\d*\)?\s*(.+?)\s*[|–-]\s*LinkedIn/)?.[1]));
+  const titleName =
+    parseTitle(document.title) || safe(() => parseTitle(window.top.document.title));
   const vouchedByTitle = (n) => {
     if (!n || !titleName) return false;
     const a = n.toLowerCase();
@@ -231,7 +237,6 @@
   const csrf = safe(() =>
     decodeURIComponent(document.cookie.match(/JSESSIONID="?([^";]+)/)[1]),
   );
-  let apiStatus = csrf ? 'no-call' : 'no-csrf';
 
   async function voyagerGet(path) {
     const r = await fetch(`/voyager/api${path}`, {
@@ -246,18 +251,46 @@
     return r.json();
   }
 
+  // LinkedIn retired the legacy profileView endpoint (it 410s on current
+  // builds) in favour of the dash API; try newest-first and keep the trail
+  // of what each attempt said for the debug line.
+  const API_ATTEMPTS = [
+    {
+      label: 'dash',
+      path: (s) =>
+        `/identity/dash/profiles?q=memberIdentity&memberIdentity=${encodeURIComponent(s)}` +
+        '&decorationId=com.linkedin.voyager.dash.deco.identity.profile.FullProfileWithEntities-101',
+    },
+    {
+      label: 'dash-plain',
+      path: (s) =>
+        `/identity/dash/profiles?q=memberIdentity&memberIdentity=${encodeURIComponent(s)}`,
+    },
+    {
+      label: 'legacy',
+      path: (s) => `/identity/profiles/${encodeURIComponent(s)}/profileView`,
+    },
+  ];
+
   let api = {};
   let email;
   let phone;
+  const apiTrail = [];
+  if (!csrf) apiTrail.push('no-csrf');
   if (csrf && slug) {
-    try {
-      const view = await voyagerGet(
-        `/identity/profiles/${encodeURIComponent(slug)}/profileView`,
-      );
-      api = parseIncluded(view?.included, false);
-      apiStatus = api.name ? 'ok' : 'empty';
-    } catch (e) {
-      apiStatus = e.message;
+    for (const att of API_ATTEMPTS) {
+      try {
+        const view = await voyagerGet(att.path(slug));
+        const parsed = parseIncluded(view?.included, false);
+        if (parsed.name) {
+          api = parsed;
+          apiTrail.push(`${att.label}:ok`);
+          break;
+        }
+        apiTrail.push(`${att.label}:empty`);
+      } catch (e) {
+        apiTrail.push(`${att.label}:${e.message}`);
+      }
     }
     // Contact info is only exposed for (some) connections; entirely optional.
     const ci = await safe(async () => {
@@ -272,6 +305,7 @@
     email = clean(ci?.data?.emailAddress);
     phone = clean(ci?.data?.phoneNumbers?.[0]?.number);
   }
+  const apiStatus = apiTrail.join(',') || 'no-call';
 
   // ── wait for render (DOM signals only — the API result doesn't need it) ──
   const waitFor = async (fn, timeoutMs, stepMs = 300) => {
@@ -284,10 +318,14 @@
     }
   };
 
-  await waitFor(() => {
-    const h1 = clean(deepQS('main h1')?.textContent) || clean(deepQS('h1')?.textContent);
-    return vouchedByTitle(h1) ? h1 : false;
-  }, api.name ? 1200 : 4000);
+  await waitFor(
+    () => {
+      const h1 = clean(deepQS('main h1')?.textContent) || clean(deepQS('h1')?.textContent);
+      return vouchedByTitle(h1) ? h1 : false;
+    },
+    // Don't stall long in subframes that will never render the person.
+    api.name ? 1000 : window === window.top ? 4000 : 2000,
+  );
 
   // ── source 2: embedded Voyager payloads ───────────────────────────────────
   // LinkedIn ships these inside HTML comments: <code><!--{json}--></code>.
@@ -572,7 +610,9 @@
     vouchedH1: !!h1El,
     h1s: deepQSA('h1').length,
     shadowRoots: allRoots().length - 1,
-    title: clean(document.title)?.slice(0, 60),
+    top: window === window.top,
+    frame: clean(location.pathname)?.slice(0, 40),
+    title: (clean(document.title) || titleName || '')?.slice(0, 60),
   };
 
   return { ok: !!profile.name, profile, debug };
