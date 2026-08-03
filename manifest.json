@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
   "name": "LinkedIn → CRM capture",
-  "version": "0.1.0",
-  "description": "Capture an open LinkedIn message thread into the Servo7 CRM as a meeting note.",
+  "version": "0.2.0",
+  "description": "Capture an open LinkedIn message thread into the Servo7 CRM as a meeting note, or export a candidate profile to the recruitment pipeline.",
   "permissions": ["sidePanel", "storage", "activeTab", "scripting", "tabs"],
   "host_permissions": [
-    "https://www.linkedin.com/*",
+    "https://*.linkedin.com/*",
     "https://brain.servo7.com/*",
     "https://crm.becking.dev/*"
   ],

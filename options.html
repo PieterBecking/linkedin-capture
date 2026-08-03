@@ -37,6 +37,24 @@
     <span id="msg" class="meta"></span>
   </div>
 
+  <h2 style="font-weight:600; font-size:16px; margin:32px 0 16px;">Recruitment export</h2>
+
+  <div class="field">
+    <label for="extBaseUrl">Server base URL</label>
+    <input id="extBaseUrl" type="text" placeholder="https://brain.servo7.com" />
+  </div>
+
+  <div class="field">
+    <label for="extensionToken">Extension token <span class="meta">(sent as <code>X-Extension-Token</code>)</span></label>
+    <input id="extensionToken" type="password" placeholder="paste token" autocomplete="off" />
+  </div>
+
+  <div class="row">
+    <button id="extSaveBtn" class="btn primary">Save</button>
+    <button id="extTestBtn" class="btn">Test connection</button>
+    <span id="extMsg" class="meta"></span>
+  </div>
+
   <script src="options.js"></script>
 </body>
 </html>

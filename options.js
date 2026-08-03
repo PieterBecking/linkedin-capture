@@ -60,3 +60,67 @@ async function test() {
 saveBtn.addEventListener('click', save);
 testBtn.addEventListener('click', test);
 load();
+
+// ── recruitment export (extension API) ─────────────────────────────────────
+// Separate settings namespace: chrome.storage.sync, X-Extension-Token auth.
+// All requests go through the background worker (the API sends no CORS
+// headers); `overrides` lets Test connection use unsaved field values.
+
+const extBaseUrlEl = document.getElementById('extBaseUrl');
+const extTokenEl   = document.getElementById('extensionToken');
+const extSaveBtn   = document.getElementById('extSaveBtn');
+const extTestBtn   = document.getElementById('extTestBtn');
+const extMsgEl     = document.getElementById('extMsg');
+
+function setExtMsg(text, color) {
+  extMsgEl.textContent = text;
+  extMsgEl.style.color = color || '#8e8e93';
+}
+
+async function loadExt() {
+  const { extBaseUrl, extensionToken } = await chrome.storage.sync.get([
+    'extBaseUrl',
+    'extensionToken',
+  ]);
+  extBaseUrlEl.value = extBaseUrl || DEFAULT_CRM_URL;
+  extTokenEl.value = extensionToken || '';
+}
+
+async function saveExt() {
+  const extBaseUrl =
+    extBaseUrlEl.value.trim().replace(/\/+$/, '') || DEFAULT_CRM_URL;
+  const extensionToken = extTokenEl.value.trim();
+  await chrome.storage.sync.set({ extBaseUrl, extensionToken });
+  setExtMsg('Saved.', '#30d158');
+}
+
+async function testExt() {
+  const baseUrl = extBaseUrlEl.value.trim().replace(/\/+$/, '') || DEFAULT_CRM_URL;
+  const token = extTokenEl.value.trim();
+  if (!token) {
+    setExtMsg('Add a token first.', '#ff453a');
+    return;
+  }
+  setExtMsg('Testing…');
+  const resp = await chrome.runtime
+    .sendMessage({
+      type: 'brainApi',
+      path: '/api/extension/ping',
+      overrides: { baseUrl, token },
+    })
+    .catch((e) => ({ ok: false, status: 0, error: e.message }));
+  if (!resp) {
+    setExtMsg('No response from background worker.', '#ff453a');
+  } else if (resp.ok) {
+    setExtMsg('OK — token accepted.', '#30d158');
+  } else {
+    setExtMsg(
+      resp.error || `HTTP ${resp.status}: ${resp.data?.detail || 'request failed'}`,
+      '#ff453a',
+    );
+  }
+}
+
+extSaveBtn.addEventListener('click', saveExt);
+extTestBtn.addEventListener('click', testExt);
+loadExt();
