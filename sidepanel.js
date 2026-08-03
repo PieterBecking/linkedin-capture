@@ -715,6 +715,15 @@ function scrapeSummaryText(p) {
   ].join(' · ');
 }
 
+// Which scrape layer broke — shown when no name was found so the failure is
+// reportable (api = Voyager call status, blobs = embedded payloads found,
+// h1 = top-card heading present).
+function scrapeDebugText(result) {
+  const d = result?.debug;
+  if (!d) return result?.error || 'no debug info';
+  return `api=${d.api} · blobs=${d.embeddedBlobs} · h1=${d.domH1 ? 'yes' : 'no'}/${d.h1s} · title="${d.title || ''}"`;
+}
+
 function renderProfileHeader() {
   const p = profileState.scraped || {};
   const slug = (profileState.url || '').match(/\/in\/([^/?#]+)/)?.[1] || '';
@@ -735,7 +744,10 @@ async function rescanProfile(e) {
   if ((tab.url || '') !== profileState.url) return;
   profileState.scraped = result?.profile || {};
   renderProfileHeader();
-  setStatus(result?.ok ? 'Profile rescanned.' : 'Rescan still found no name — is the profile fully loaded?', result?.ok ? 'ok' : 'warn');
+  setStatus(
+    result?.ok ? 'Profile rescanned.' : `Rescan still found no name. Debug: ${scrapeDebugText(result)}`,
+    result?.ok ? 'ok' : 'warn',
+  );
 }
 
 rescanLink.addEventListener('click', rescanProfile);
@@ -791,8 +803,9 @@ async function initProfileMode(tab, url) {
   profileState.scraped = scraped?.profile || {};
   renderProfileHeader();
   if (!scraped?.ok) {
+    console.warn('[linkedin-capture] scrape debug', scraped?.debug);
     setStatus(
-      'Could not read a name off this profile — try “rescan” once the page has fully loaded. Export sends whatever was scraped.',
+      `Could not read a name off this profile — try “rescan” once the page has fully loaded. Debug: ${scrapeDebugText(scraped)}`,
       'warn',
     );
   }

@@ -28,7 +28,11 @@ Chat capture:
 Recruitment export:
 
 - `profile.js` injected on demand, same pattern as `content.js`. Returns `{ ok, profile }`; every selector is wrapped so DOM churn yields missing keys, never a thrown error. Values that can't be read are omitted, not guessed (email/phone are behind the contact-info overlay and deliberately not scraped).
-- `profile.js` merges two sources: the visible DOM and LinkedIn's embedded Voyager JSON (`<code>` blobs with `"included"` arrays; profile entity matched by `publicIdentifier === slug` so SPA transitions can't leak the previous profile). Voyager wins on identity/text fields, the longer list wins per section. It awaits render (top-card `h1` agreeing with `document.title`, ≤4s) because LinkedIn paints lazily; the panel retries once and has a "rescan" link.
+- `profile.js` merges three sources, best-first:
+  1. Voyager REST API — same-origin `GET /voyager/api/identity/profiles/<slug>/profileView` (+ `profileContactInfo` for email/phone) with `csrf-token` = the `JSESSIONID` cookie value and `accept: application/vnd.linkedin.normalized+json+2.1`. Authoritative; immune to DOM churn. Legacy entities use `timePeriod{startDate,endDate}`, dash uses `dateRange{start,end}` — handle both.
+  2. Embedded Voyager payloads. GOTCHA: LinkedIn wraps these in HTML comments (`<code><!--{json}--></code>`), so `textContent` is EMPTY — read `code.firstChild.nodeValue` when it's a comment node. Profile entity matched by `publicIdentifier === slug` so SPA transitions can't leak the previous profile.
+  3. Visible DOM (only source for open-to-work, connection degree, followers, mutuals). Name has a fallback chain: `main h1` → any `h1` → avatar alt → Message/Invite button aria-label → tab title.
+  It awaits render (top-card `h1` agreeing with `document.title`, ≤4s when the API found nothing); the panel retries once, has a "rescan" link, and shows a per-layer debug string (`api=… blobs=… h1=…`) whenever no name was found.
 - Auth: the Brain session cookie, nothing else — every call goes out with `credentials: 'include'`. There is NO extension token (the server-side one was deleted Aug 2026). `401` = signed out of brain.servo7.com in this browser (show a sign-in link, never call it a config problem); `403` = signed in but missing the `recruitment` permission; `400` = payload problem, show `detail` verbatim.
 - Endpoints (all under `https://brain.servo7.com`, fixed server-side):
   - `GET /api/extension/ping` — options-page connection test.
