@@ -4,18 +4,22 @@
 //
 // Three sources, merged best-first:
 //  1. LinkedIn's own Voyager REST API, called same-origin with the user's
-//     session (csrf token from the JSESSIONID cookie) — the same call the
-//     page itself makes. Authoritative and immune to DOM churn.
+//     session (csrf token from the JSESSIONID cookie). Authoritative and
+//     immune to DOM churn.
 //  2. The Voyager JSON payloads embedded in <code> elements. NOTE: LinkedIn
 //     wraps these in HTML comments, so they must be read off comment nodes —
 //     textContent is empty.
-//  3. The visible DOM. Carries render-only signals (open-to-work, connection
-//     degree, followers, mutuals, avatar) plus a fallback for everything else.
+//  3. The visible DOM, searched through shadow roots too.
+//
+// IDENTITY SAFETY: the page is full of OTHER people (More profiles for you,
+// People also viewed, recommenders). Sources 1–2 are slug-scoped. For the
+// DOM, a name is accepted ONLY if the tab title — which always names the
+// viewed person — vouches for it, and per-person reads stay inside the
+// validated top card. No document-wide identity guessing, ever: a wrong
+// person is far worse than a missing key.
 //
 // Every read is wrapped so a change on LinkedIn's side yields a missing key,
-// never a thrown error that kills the export. Values that can't be read are
-// omitted, not guessed. Returns { ok, profile, debug } — debug says which
-// layers produced data, for the day all of this rots.
+// never a thrown error that kills the export. Returns { ok, profile, debug }.
 (async () => {
   const safe = (fn) => {
     try {
@@ -56,9 +60,50 @@
     });
   };
 
+  // ── shadow-DOM-aware queries ───────────────────────────────────────────────
+  // LinkedIn increasingly renders inside web components; plain querySelector
+  // can't see into shadow roots, which leaves only old-style sidebar modules
+  // visible. Walk every root.
+  const allRoots = () => {
+    const out = [document];
+    const walk = (root) => {
+      for (const el of root.querySelectorAll('*')) {
+        if (el.shadowRoot) {
+          out.push(el.shadowRoot);
+          walk(el.shadowRoot);
+        }
+      }
+    };
+    safe(() => walk(document));
+    return out;
+  };
+  const deepQS = (sel) => {
+    for (const r of allRoots()) {
+      const el = safe(() => r.querySelector(sel));
+      if (el) return el;
+    }
+    return undefined;
+  };
+  const deepQSA = (sel) => {
+    const out = [];
+    for (const r of allRoots()) out.push(...(safe(() => [...r.querySelectorAll(sel)]) || []));
+    return out;
+  };
+
   const slug = safe(() =>
     decodeURIComponent(location.pathname.match(/\/in\/([^/?#]+)/)[1]),
   );
+
+  // The tab title names the person being viewed: "(3) Jane Doe | LinkedIn".
+  const titleName = clean(
+    safe(() => document.title.match(/^\(?\d*\)?\s*(.+?)\s*[|–-]\s*LinkedIn/)?.[1]),
+  );
+  const vouchedByTitle = (n) => {
+    if (!n || !titleName) return false;
+    const a = n.toLowerCase();
+    const b = titleName.toLowerCase();
+    return a.includes(b) || b.includes(a);
+  };
 
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const fmtDate = (d) =>
@@ -93,7 +138,6 @@
   function parseIncluded(included, requireSlugMatch) {
     if (!Array.isArray(included) || !included.length) return {};
 
-    // The person: a full Profile entity, or a MiniProfile carrying the slug.
     const mini = included.find((e) => e?.publicIdentifier === slug);
     let prof = included.find(
       (e) =>
@@ -230,7 +274,7 @@
   }
 
   // ── wait for render (DOM signals only — the API result doesn't need it) ──
-  const waitFor = async (fn, timeoutMs, stepMs = 250) => {
+  const waitFor = async (fn, timeoutMs, stepMs = 300) => {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const v = safe(fn);
@@ -241,17 +285,15 @@
   };
 
   await waitFor(() => {
-    const h1 = clean(document.querySelector('main h1')?.textContent);
-    if (!h1) return false;
-    const title = (clean(document.title) || '').toLowerCase();
-    return title.includes(h1.toLowerCase()) ? h1 : false;
+    const h1 = clean(deepQS('main h1')?.textContent) || clean(deepQS('h1')?.textContent);
+    return vouchedByTitle(h1) ? h1 : false;
   }, api.name ? 1200 : 4000);
 
   // ── source 2: embedded Voyager payloads ───────────────────────────────────
   // LinkedIn ships these inside HTML comments: <code><!--{json}--></code>.
   function embeddedIncluded() {
     const out = [];
-    for (const code of document.querySelectorAll('code')) {
+    for (const code of deepQSA('code')) {
       let t = code.textContent || '';
       if (!t.trim()) {
         const c = code.firstChild;
@@ -265,15 +307,20 @@
     }
     return out;
   }
-  const embedded = safe(() => parseIncluded(embeddedIncluded(), true)) || {};
+  const embeddedBlobs = safe(embeddedIncluded) || [];
+  const embedded = safe(() => parseIncluded(embeddedBlobs, true)) || {};
 
   // ── source 3: visible DOM ──────────────────────────────────────────────────
-  const topCard =
-    safe(() => document.querySelector('main h1')?.closest('section')) ||
-    document.body;
+  // The ONLY h1s we trust are ones the tab title vouches for. Everything
+  // per-person below is scoped to that h1's card; with no vouched h1 there is
+  // no top card and the DOM contributes nothing about the person.
+  const h1El = [deepQS('main h1'), deepQS('h1')].find((el) =>
+    vouchedByTitle(clean(el?.textContent)),
+  );
+  const domName = clean(h1El?.textContent) || titleName;
+  const topCard = safe(() => h1El?.closest('section')) || null;
 
-  const sectionFor = (id) =>
-    safe(() => document.getElementById(id)?.closest('section')) || null;
+  const sectionFor = (id) => safe(() => deepQS(`#${id}`)?.closest('section')) || null;
 
   const sectionItems = (id) =>
     safe(() => {
@@ -391,79 +438,60 @@
       })
       .filter(Boolean);
 
-  // Name off the DOM, with fallbacks for markup churn: the top-card h1, any
-  // first h1, the avatar's alt text, a connect/message button label, and
-  // finally the tab title ("(3) Jane Doe | LinkedIn") — all displayed data.
-  const domName =
-    clean(safe(() => document.querySelector('main h1')?.textContent)) ||
-    clean(safe(() => document.querySelector('h1')?.textContent)) ||
-    clean(
-      safe(() => {
-        const img = document.querySelector('img[class*="profile-picture"], .pv-top-card img');
-        const alt = img?.getAttribute('alt');
-        return alt && !/photo|picture|logo/i.test(alt) ? alt : undefined;
-      }),
-    ) ||
-    clean(
-      safe(
-        () =>
-          [...document.querySelectorAll('button[aria-label]')]
-            .map((b) => b.getAttribute('aria-label'))
-            .map((l) => l?.match(/^(?:Message|Invite)\s+(.+?)(?:\s+to connect)?$/)?.[1])
-            .find(Boolean),
-      ),
-    ) ||
-    clean(safe(() => document.title.match(/^\(?\d*\)?\s*(.+?)\s*[|–-]\s*LinkedIn/)?.[1]));
-
-  const domHeadline = clean(
-    safe(() => topCard.querySelector('.text-body-medium.break-words')?.textContent),
-  );
-  const domLocation = clean(
-    safe(
-      () =>
-        topCard.querySelector(
-          'span.text-body-small.inline.t-black--light.break-words',
-        )?.textContent,
-    ),
-  );
+  // Per-person DOM reads exist only inside the vouched top card.
+  const domHeadline = topCard
+    ? clean(safe(() => topCard.querySelector('.text-body-medium.break-words')?.textContent))
+    : undefined;
+  const domLocation = topCard
+    ? clean(
+        safe(
+          () =>
+            topCard.querySelector(
+              'span.text-body-small.inline.t-black--light.break-words',
+            )?.textContent,
+        ),
+      )
+    : undefined;
   const domAbout = safe(() =>
     vis(sectionFor('about')?.querySelector('.inline-show-more-text'))?.replace(
       /…?\s*see more$/i,
       '',
     ),
   );
-  const domAvatar = safe(() => {
-    const img =
-      topCard.querySelector('img.pv-top-card-profile-picture__image--show') ||
-      document.querySelector('.pv-top-card-profile-picture img') ||
-      document.querySelector('img[class*="pv-top-card-profile-picture"]');
-    const src = img?.currentSrc || img?.src;
-    return /^https?:/.test(src || '') ? src : undefined;
-  });
+  const domAvatar = topCard
+    ? safe(() => {
+        const img = topCard.querySelector('img[class*="profile-picture"], img[class*="top-card"]');
+        const src = img?.currentSrc || img?.src;
+        return /^https?:/.test(src || '') ? src : undefined;
+      })
+    : undefined;
 
-  const cardText = safe(() => topCard.innerText) || '';
+  const cardText = (topCard && safe(() => topCard.innerText)) || '';
   const followers = clean(
     safe(() => cardText.match(/([\d.,]+\s*[KM]?\+?)\s+followers/i)?.[1]),
   );
   const connections = clean(
     safe(() => cardText.match(/([\d.,]+\s*[KM]?\+?)\s+connections/i)?.[1]),
   );
-  const connection_degree = safe(() => {
-    const t = clean(
-      document.querySelector('.distance-badge .dist-value, span.dist-value')
-        ?.textContent,
-    );
-    return t ? t.replace(/^[^0-9]*/, '') || t : undefined;
-  });
-  const mutual_connections = clean(
-    safe(() =>
-      [...topCard.querySelectorAll('a')]
-        .map((a) => clean(a.textContent))
-        .find((t) => /mutual connection/i.test(t || '')),
-    ),
-  );
+  const connection_degree = topCard
+    ? safe(() => {
+        const t = clean(
+          topCard.querySelector('.distance-badge .dist-value, span.dist-value')?.textContent,
+        );
+        return t ? t.replace(/^[^0-9]*/, '') || t : undefined;
+      })
+    : undefined;
+  const mutual_connections = topCard
+    ? clean(
+        safe(() =>
+          [...topCard.querySelectorAll('a')]
+            .map((a) => clean(a.textContent))
+            .find((t) => /mutual connection/i.test(t || '')),
+        ),
+      )
+    : undefined;
   const open_to_work =
-    /open to work/i.test(cardText) || !!sectionFor('open_to_work')
+    (cardText && /open to work/i.test(cardText)) || !!sectionFor('open_to_work')
       ? true
       : undefined;
 
@@ -487,6 +515,15 @@
       .map((s) => s[key] || [])
       .reduce((best, cur) => (cur.length > best.length ? cur : best), []);
 
+  const nameSource = api.name
+    ? 'api'
+    : embedded.name
+      ? 'embedded'
+      : h1El
+        ? 'dom-h1'
+        : titleName
+          ? 'tab-title'
+          : 'none';
   const name = pick('name');
   let first_name = api.first_name || embedded.first_name;
   let last_name = api.last_name || embedded.last_name;
@@ -529,10 +566,12 @@
 
   const debug = {
     api: apiStatus,
+    nameSource,
+    embeddedBlobs: embeddedBlobs.length,
     embeddedName: !!embedded.name,
-    embeddedBlobs: safe(() => embeddedIncluded().length) || 0,
-    domH1: !!document.querySelector('main h1'),
-    h1s: document.querySelectorAll('h1').length,
+    vouchedH1: !!h1El,
+    h1s: deepQSA('h1').length,
+    shadowRoots: allRoots().length - 1,
     title: clean(document.title)?.slice(0, 60),
   };
 

@@ -704,24 +704,29 @@ async function scrapeProfile(tabId) {
 
 // One line of truth about what the scrape actually read, so a thin export
 // is visible before it happens.
-function scrapeSummaryText(p) {
+function scrapeSummaryText(p, debug) {
   const flag = (label, v) => `${label} ${v ? '✓' : '—'}`;
-  return [
+  const bits = [
     flag('bio', p.about),
     flag('role', p.current_title),
     `exp ${p.experience?.length || 0}`,
     `edu ${p.education?.length || 0}`,
     `skills ${p.skills?.length || 0}`,
-  ].join(' · ');
+  ];
+  if (debug?.nameSource) bits.push(`via ${debug.nameSource}`);
+  return bits.join(' · ');
 }
 
-// Which scrape layer broke — shown when no name was found so the failure is
+// Which scrape layer produced (or failed to produce) the identity — always
 // reportable (api = Voyager call status, blobs = embedded payloads found,
-// h1 = top-card heading present).
+// h1 = title-vouched heading present, shadow = shadow roots seen).
 function scrapeDebugText(result) {
   const d = result?.debug;
   if (!d) return result?.error || 'no debug info';
-  return `api=${d.api} · blobs=${d.embeddedBlobs} · h1=${d.domH1 ? 'yes' : 'no'}/${d.h1s} · title="${d.title || ''}"`;
+  return (
+    `api=${d.api} · name=${d.nameSource} · blobs=${d.embeddedBlobs} · ` +
+    `h1=${d.vouchedH1 ? 'yes' : 'no'}/${d.h1s} · shadow=${d.shadowRoots} · title="${d.title || ''}"`
+  );
 }
 
 function renderProfileHeader() {
@@ -732,7 +737,27 @@ function renderProfileHeader() {
     p.headline ||
     [p.current_title, p.current_company].filter(Boolean).join(' @ ') ||
     '';
-  scrapeSummaryEl.textContent = scrapeSummaryText(p);
+  scrapeSummaryEl.textContent = scrapeSummaryText(p, profileState.debug);
+}
+
+// Surface scrape quality after every scan: hard failure, or identity that
+// came off a weak source (structured layers empty), both with the debug line.
+function reportScrapeQuality(result) {
+  console.warn('[linkedin-capture] scrape debug', result?.debug, result?.profile);
+  if (!result?.ok) {
+    setStatus(
+      `Could not read a name off this profile — try “rescan” once the page has fully loaded. Debug: ${scrapeDebugText(result)}`,
+      'warn',
+    );
+    return;
+  }
+  const src = result.debug?.nameSource;
+  if (src && src !== 'api' && src !== 'embedded') {
+    setStatus(
+      `Scraped via DOM fallback (${src}) — structured data may be thin. Check the name is right before exporting. Debug: ${scrapeDebugText(result)}`,
+      'warn',
+    );
+  }
 }
 
 async function rescanProfile(e) {
@@ -743,11 +768,13 @@ async function rescanProfile(e) {
   const result = await scrapeProfile(tab.id);
   if ((tab.url || '') !== profileState.url) return;
   profileState.scraped = result?.profile || {};
+  profileState.debug = result?.debug;
   renderProfileHeader();
-  setStatus(
-    result?.ok ? 'Profile rescanned.' : `Rescan still found no name. Debug: ${scrapeDebugText(result)}`,
-    result?.ok ? 'ok' : 'warn',
-  );
+  if (result?.ok && ['api', 'embedded'].includes(result.debug?.nameSource)) {
+    setStatus('Profile rescanned.', 'ok');
+  } else {
+    reportScrapeQuality(result);
+  }
 }
 
 rescanLink.addEventListener('click', rescanProfile);
@@ -801,14 +828,9 @@ async function initProfileMode(tab, url) {
     if (profileState.url !== url) return;
   }
   profileState.scraped = scraped?.profile || {};
+  profileState.debug = scraped?.debug;
   renderProfileHeader();
-  if (!scraped?.ok) {
-    console.warn('[linkedin-capture] scrape debug', scraped?.debug);
-    setStatus(
-      `Could not read a name off this profile — try “rescan” once the page has fully loaded. Debug: ${scrapeDebugText(scraped)}`,
-      'warn',
-    );
-  }
+  reportScrapeQuality(scraped);
 
   const rolesResp = await rolesP;
   if (profileState.url !== url) return;
