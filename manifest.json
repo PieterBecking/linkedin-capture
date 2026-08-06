@@ -6,6 +6,7 @@
   "permissions": ["sidePanel", "storage", "activeTab", "scripting", "tabs"],
   "host_permissions": [
     "https://*.linkedin.com/*",
+    "https://app.juicebox.ai/*",
     "https://brain.servo7.com/*",
     "https://crm.becking.dev/*"
   ],

@@ -17,6 +17,7 @@ MV3 Chrome extension with two side-panel modes, routed off the active tab URL (`
 
 1. **Chat capture** (`/messaging/…`): captures an open LinkedIn message thread DOM and posts it as a meeting note to the Servo7 CRM (`/api/notes`), using the same `#company` / `@person` mention model as the notes app at `/opt/projects/notes`.
 2. **Recruitment export** (`/in/<slug>`, any linkedin subdomain): scrapes the candidate profile (`profile.js`) and exports it to the recruitment pipeline.
+3. **Juicebox export** (`app.juicebox.ai`, any path): same recruitment UI, but the scraper is `juicebox.js` — same `{ ok, profile, debug }` contract as `profile.js`, picked by `scrapeProfile` off the URL.
 
 Chat capture:
 
@@ -42,6 +43,14 @@ Recruitment export:
   - `POST /api/extension/recruitment/candidates` — full scrape + `role_id`/`stage`/`notes`. `already_in_pipeline: true` in the response = refreshed, not newly added. 400 `detail` is shown verbatim.
 - ALL recruitment fetches go through the background worker (`{ type: 'brainApi' }` message to `background.js`) — the server sends no CORS headers, and `host_permissions` on `brain.servo7.com` is what makes worker fetches legal and cookie-bearing. Never fetch from a content script.
 - The only recruitment setting is the base URL (`extBaseUrl`, `chrome.storage.sync`); chat-capture settings stay in `chrome.storage.local`. Don't mix them.
+
+Juicebox export:
+
+- One page = a search-results list of MANY candidates plus one expanded detail panel (`?contact=<id>&expanded=true`). IDENTITY SAFETY: `juicebox.js` scopes every read to that panel, found by walking UP from `[data-tour-id="search.profile-detail"]` to the first ancestor that also contains the header's `a[href*="linkedin.com/in/"]`; the walk stops before `document.body` — no qualifying ancestor → scrape refuses rather than read a list row.
+- Selector anchors are aria-labels (`Location:`, `Company:`, `Experience at …`), `id="exp<N>"`/`"edu<N>"`, and inline styles (`font-weight: 500` = entity title, `400` = company/sub, `rgb(107, 114, 128)` = muted location). Juicebox's hashed utility classes (`css-…`) are never used. Descriptions render 3 copies (visible clamped + two hidden measuring divs) — take the one without `visibility: hidden`.
+- The candidate's `linkedin_url` comes from the panel-header anchor and is what keys the CRM. The Juicebox tab URL is search-state, not identity: the pipeline lookup waits for the scrape (it can't run in parallel like on LinkedIn), and export is blocked when no LinkedIn URL was scraped — the tab URL must never be sent as `linkedin_url`.
+- Extra payload keys (`juicebox_match`, `juicebox_criteria`, `juicebox_url`, `total_experience`, `scrape_source`) ride along verbatim like the rest of the scrape.
+- Email/phone sit behind Juicebox's "Reveal" credits and are deliberately not scraped.
 
 ## Selectors that may rot
 

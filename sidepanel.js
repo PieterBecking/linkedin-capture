@@ -21,6 +21,9 @@ const LINKEDIN_MESSAGING_RE =
   /^https:\/\/([a-z0-9-]+\.)*linkedin\.com\/messaging([/?#]|$)/i;
 const LINKEDIN_PROFILE_RE =
   /^https:\/\/([a-z0-9-]+\.)*linkedin\.com\/in\/[^/?#]+/i;
+// Juicebox sourcing: any app.juicebox.ai page gets the same recruitment
+// export UI; the scraper reports when no candidate panel is expanded yet.
+const JUICEBOX_RE = /^https:\/\/app\.juicebox\.ai\//i;
 
 const DEFAULT_BRAIN_URL = 'https://brain.servo7.com';
 
@@ -643,6 +646,7 @@ function showApiError(prefix, resp) {
 
 function detectMode(url) {
   if (LINKEDIN_PROFILE_RE.test(url || '')) return 'profile';
+  if (JUICEBOX_RE.test(url || '')) return 'profile';
   if (LINKEDIN_MESSAGING_RE.test(url || '')) return 'chat';
   return 'none';
 }
@@ -669,7 +673,7 @@ async function refreshMode() {
   if (mode === 'none') {
     if (modeChanged) {
       setStatus(
-        'Nothing to capture here. Open a LinkedIn message thread (/messaging/) or a profile (/in/<name>).',
+        'Nothing to capture here. Open a LinkedIn message thread (/messaging/), a profile (/in/<name>), or a Juicebox candidate.',
         'warn',
       );
     }
@@ -692,12 +696,14 @@ async function refreshMode() {
 // ── profile scrape ─────────────────────────────────────────────────────────
 // Injected into ALL frames: some LinkedIn builds render the profile in a
 // subframe, leaving the top document an empty shell. Each frame scrapes
-// independently; keep the richest result.
-async function scrapeProfile(tabId) {
+// independently; keep the richest result. The scraper file is picked off the
+// URL — juicebox.js and profile.js return the same { ok, profile, debug }.
+async function scrapeProfile(tabId, url) {
+  const file = JUICEBOX_RE.test(url || '') ? 'juicebox.js' : 'profile.js';
   try {
     const frames = await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
-      files: ['profile.js'],
+      files: [file],
     });
     const results = frames.map((f) => f?.result).filter(Boolean);
     if (results.length > 1) console.warn('[linkedin-capture] frame results', results);
@@ -736,6 +742,12 @@ function scrapeSummaryText(p, debug) {
 function scrapeDebugText(result) {
   const d = result?.debug;
   if (!d) return result?.error || 'no debug info';
+  // Non-LinkedIn scrapers (juicebox.js) ship their own debug shape.
+  if (d.api === undefined) {
+    return Object.entries(d)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(' · ');
+  }
   return (
     `api=${d.api} · name=${d.nameSource} · blobs=${d.embeddedBlobs} · ` +
     `h1=${d.vouchedH1 ? 'yes' : 'no'}/${d.h1s} · shadow=${d.shadowRoots} · ` +
@@ -745,7 +757,8 @@ function scrapeDebugText(result) {
 
 function renderProfileHeader() {
   const p = profileState.scraped || {};
-  const slug = (profileState.url || '').match(/\/in\/([^/?#]+)/)?.[1] || '';
+  const slug =
+    (p.linkedin_url || profileState.url || '').match(/\/in\/([^/?#]+)/)?.[1] || '';
   profileNameEl.textContent = p.name || decodeURIComponent(slug) || 'Unknown profile';
   profileHeadlineEl.textContent =
     p.headline ||
@@ -753,6 +766,10 @@ function renderProfileHeader() {
     '';
   scrapeSummaryEl.textContent = scrapeSummaryText(p, profileState.debug);
 }
+
+// Sources that identify the person structurally; anything else is a DOM
+// fallback worth a warning. 'panel' = the scoped Juicebox candidate panel.
+const GOOD_NAME_SOURCES = ['api', 'embedded', 'panel'];
 
 // Surface scrape quality after every scan: hard failure, or identity that
 // came off a weak source (structured layers empty), both with the debug line.
@@ -766,7 +783,7 @@ function reportScrapeQuality(result) {
     return;
   }
   const src = result.debug?.nameSource;
-  if (src && src !== 'api' && src !== 'embedded') {
+  if (src && !GOOD_NAME_SOURCES.includes(src)) {
     setStatus(
       `Scraped via DOM fallback (${src}) — structured data may be thin. Check the name is right before exporting. Debug: ${scrapeDebugText(result)}`,
       'warn',
@@ -779,12 +796,12 @@ async function rescanProfile(e) {
   const tab = await getActiveTab();
   if (!tab?.id || (tab.url || '') !== profileState.url) return;
   scrapeSummaryEl.textContent = 'rescanning…';
-  const result = await scrapeProfile(tab.id);
+  const result = await scrapeProfile(tab.id, tab.url);
   if ((tab.url || '') !== profileState.url) return;
   profileState.scraped = result?.profile || {};
   profileState.debug = result?.debug;
   renderProfileHeader();
-  if (result?.ok && ['api', 'embedded'].includes(result.debug?.nameSource)) {
+  if (result?.ok && GOOD_NAME_SOURCES.includes(result.debug?.nameSource)) {
     setStatus('Profile rescanned.', 'ok');
   } else {
     reportScrapeQuality(result);
@@ -824,13 +841,20 @@ async function initProfileMode(tab, url) {
   stageSelect.innerHTML = '';
   stageSelect.disabled = true;
 
-  // Scrape and both API calls run in parallel. profile.js itself waits for
-  // the profile to render (LinkedIn paints lazily / navigates as an SPA).
-  const scrapeP = scrapeProfile(tab.id);
+  // Scrape and the API calls run in parallel where possible. The scraper
+  // itself waits for the page to render (both sites paint lazily / navigate
+  // as SPAs). On LinkedIn the tab URL IS the candidate's LinkedIn URL, so the
+  // pipeline lookup starts immediately; on Juicebox the LinkedIn URL only
+  // exists after the scrape, so the lookup waits for it.
+  const isJuicebox = JUICEBOX_RE.test(url);
+  const scrapeP = scrapeProfile(tab.id, url);
   const rolesP = brainApi('/api/extension/recruitment/roles');
-  const lookupP = brainApi(
-    '/api/extension/recruitment/candidates/lookup?linkedin_url=' + encodeURIComponent(url),
-  );
+  let lookupP = isJuicebox
+    ? null
+    : brainApi(
+        '/api/extension/recruitment/candidates/lookup?linkedin_url=' +
+          encodeURIComponent(url),
+      );
 
   let scraped = await scrapeP;
   if (profileState.url !== url) return; // navigated away meanwhile
@@ -838,7 +862,7 @@ async function initProfileMode(tab, url) {
     // One more shot after a beat — the page may have finished rendering since.
     await new Promise((r) => setTimeout(r, 1500));
     if (profileState.url !== url) return;
-    scraped = await scrapeProfile(tab.id);
+    scraped = await scrapeProfile(tab.id, url);
     if (profileState.url !== url) return;
   }
   profileState.scraped = scraped?.profile || {};
@@ -846,13 +870,22 @@ async function initProfileMode(tab, url) {
   renderProfileHeader();
   reportScrapeQuality(scraped);
 
+  if (isJuicebox && profileState.scraped.linkedin_url) {
+    lookupP = brainApi(
+      '/api/extension/recruitment/candidates/lookup?linkedin_url=' +
+        encodeURIComponent(profileState.scraped.linkedin_url),
+    );
+  }
+
   const rolesResp = await rolesP;
   if (profileState.url !== url) return;
   renderRoles(rolesResp);
 
-  const lookupResp = await lookupP;
-  if (profileState.url !== url) return;
-  renderLookup(lookupResp);
+  if (lookupP) {
+    const lookupResp = await lookupP;
+    if (profileState.url !== url) return;
+    renderLookup(lookupResp);
+  }
   profileState.loading = false;
 }
 
@@ -942,6 +975,15 @@ function renderLookup(resp) {
 // ── export ─────────────────────────────────────────────────────────────────
 async function exportToPipeline() {
   if (profileState.exporting) return;
+  // Juicebox tab URLs are search-state, not the candidate — a scraped
+  // LinkedIn URL is required so the CRM keys the candidate correctly.
+  if (JUICEBOX_RE.test(profileState.url || '') && !profileState.scraped.linkedin_url) {
+    setStatus(
+      'No LinkedIn URL found on this candidate — expand the profile panel and rescan before exporting.',
+      'warn',
+    );
+    return;
+  }
   const roleValue = roleSelect.value;
   if (!roleValue) {
     setStatus('Pick a role first.', 'warn');
@@ -1004,7 +1046,7 @@ async function exportToPipeline() {
     // Refresh the banner so the panel reflects the new pipeline state.
     const lookup = await brainApi(
       '/api/extension/recruitment/candidates/lookup?linkedin_url=' +
-        encodeURIComponent(profileState.url),
+        encodeURIComponent(profileState.scraped.linkedin_url || profileState.url),
     );
     renderLookup(lookup);
   } finally {
