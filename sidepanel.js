@@ -582,6 +582,9 @@ const scrapeSummaryEl   = document.getElementById('scrapeSummary');
 const rescanLink        = document.getElementById('rescanLink');
 
 let currentMode = null; // 'chat' | 'profile' | 'none'
+// Role the user picked by hand. Lives as long as the side-panel page, so it
+// survives profile-to-profile navigation but resets when the panel is closed.
+let sessionRoleId = null;
 let profileState = {
   url: null,       // tab URL this state belongs to
   scraped: {},     // profile payload from profile.js
@@ -929,7 +932,12 @@ function renderRoles(resp) {
     const label = r.is_open === false ? `${r.title} (closed)` : r.title;
     roleSelect.appendChild(new Option(label, String(r.id)));
   }
-  if (hasDefault) roleSelect.value = String(defaultId);
+  // A role picked by hand this session wins over the server default; fall
+  // back to the default only when no pick was made or the pick is gone.
+  const hasSessionPick =
+    sessionRoleId != null && data.roles.some((r) => String(r.id) === sessionRoleId);
+  if (hasSessionPick) roleSelect.value = sessionRoleId;
+  else if (hasDefault) roleSelect.value = String(defaultId);
 
   const stages = (Array.isArray(data.stages) ? data.stages : [])
     .map(normStage)
@@ -944,6 +952,10 @@ function renderRoles(resp) {
   exportBtn.disabled = false;
   profileState.rolesReady = true;
 }
+
+roleSelect.addEventListener('change', () => {
+  sessionRoleId = roleSelect.value || null;
+});
 
 // ── pipeline lookup banner ─────────────────────────────────────────────────
 function renderLookup(resp) {
