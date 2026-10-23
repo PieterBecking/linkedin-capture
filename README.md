@@ -7,6 +7,10 @@ Chrome extension (MV3, side panel) with two modes, picked automatically from the
 
 Anywhere else on the web the panel says there's nothing to capture and offers nothing.
 
+For regular WeChat on macOS, [wechat-sync](wechat-sync/README.md) provides a
+separate deterministic desktop reader and Brain importer for supplier chats.
+It can schedule transcript imports without MCP or an AI service.
+
 ## Quick replies
 
 Open a LinkedIn conversation with the sidebar open. **Quick reply** reads the rendered conversation and suggests one of your saved replies:
