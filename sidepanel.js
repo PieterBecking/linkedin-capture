@@ -12,7 +12,7 @@ const LEGACY_CRM_URL = 'https://crm.becking.dev';
 // Matches both a normal thread (/messaging/thread/<id>/) and the compose
 // overlay opened from a profile (/messaging/compose/?profileUrn=...&recipient=...).
 const LINKEDIN_THREAD_RE =
-  /^https:\/\/www\.linkedin\.com\/messaging\/(thread\/|compose[/?])/;
+  /^https:\/\/([a-z0-9-]+\.)*linkedin\.com\/messaging\/(thread\/|compose[/?])/i;
 
 // Mode routing: /messaging/… keeps the chat-capture UI; /in/<slug> (any
 // linkedin subdomain, trailing paths like /en, ?originalSubdomain=nl) gets
@@ -435,13 +435,16 @@ async function captureCurrentTab() {
   try {
     const [{ result: r }] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      files: ['content.js'],
+      files: ['thread-reader.js', 'content.js'],
     });
     result = r;
   } catch (e) {
     setStatus(`Could not inject content script: ${e.message}`, 'err');
     return;
   }
+
+  const active = await getActiveTab();
+  if (active?.id !== tab.id || active.url !== tab.url || result?.url !== tab.url) return;
 
   if (!result?.messages?.length) {
     setStatus('No messages found on this page. Scroll the thread to load history, then try again.', 'warn');
@@ -582,6 +585,7 @@ const scrapeSummaryEl   = document.getElementById('scrapeSummary');
 const rescanLink        = document.getElementById('rescanLink');
 
 let currentMode = null; // 'chat' | 'profile' | 'none'
+let activeChatKey = null;
 // Role the user picked by hand. Lives as long as the side-panel page, so it
 // survives profile-to-profile navigation but resets when the panel is closed.
 let sessionRoleId = null;
@@ -670,8 +674,18 @@ async function refreshMode() {
   const mode = detectMode(url);
   const prevMode = currentMode;
   const modeChanged = mode !== prevMode;
+  const chatKey = mode === 'chat' ? `${tab.id}:${url}` : null;
+  if (activeChatKey !== chatKey) {
+    if (activeChatKey) {
+      resetToHomescreen();
+      hideSuggest();
+      setStatus('');
+    }
+    activeChatKey = chatKey;
+  }
   currentMode = mode;
   applyModeVisibility(mode);
+  ReplyPanel.setTab(tab, mode === 'chat');
 
   if (mode === 'none') {
     if (modeChanged) {
@@ -1080,9 +1094,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 (async function init() {
   dateEl.value = todayStr();
   const { internalToken } = await getSettings();
-  if (!internalToken) {
-    setStatus('Open settings and add your CRM internal token.', 'warn');
-  } else {
+  if (internalToken) {
     loadManifest(); // fire and forget; popover falls back to freeform
   }
 

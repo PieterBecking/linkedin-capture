@@ -21,6 +21,27 @@
 <body>
   <h2 style="font-weight:600; font-size:16px; margin:0 0 16px;">LinkedIn → CRM settings</h2>
 
+  <h2 class="settings-heading">Saved replies</h2>
+  <p class="meta">Suggested replies use this wording. Add <code>{firstName}</code> for the sender’s first name. You can also edit each draft in the sidebar.</p>
+  <div class="field">
+    <label for="recruiterTemplate">Recruiters</label>
+    <textarea id="recruiterTemplate" class="notes-input" rows="4"></textarea>
+  </div>
+  <div class="field">
+    <label for="investorTemplate">Investors</label>
+    <textarea id="investorTemplate" class="notes-input" rows="5"></textarea>
+  </div>
+  <div class="field">
+    <label for="servicesTemplate">Engineering services</label>
+    <textarea id="servicesTemplate" class="notes-input" rows="4"></textarea>
+  </div>
+  <div class="row">
+    <button id="saveRepliesBtn" class="btn primary" type="button">Save replies</button>
+    <button id="resetRepliesBtn" class="btn" type="button">Restore defaults</button>
+  </div>
+  <p id="repliesMsg" class="meta" role="status" aria-live="polite"></p>
+
+  <h2 class="settings-heading">CRM capture</h2>
   <div class="field">
     <label for="crmUrl">CRM base URL</label>
     <input id="crmUrl" type="text" placeholder="https://brain.servo7.com" />
@@ -50,6 +71,7 @@
     <span id="extMsg" class="meta"></span>
   </div>
 
+  <script src="reply-templates.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

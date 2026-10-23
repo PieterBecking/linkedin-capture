@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "LinkedIn → CRM capture",
-  "version": "0.2.0",
-  "description": "Capture an open LinkedIn message thread into the Servo7 CRM as a meeting note, or export a candidate profile to the recruitment pipeline.",
+  "version": "0.3.0",
+  "description": "Draft quick LinkedIn replies, capture conversations in the Servo7 CRM, and export candidates to the recruitment pipeline.",
   "permissions": ["sidePanel", "storage", "activeTab", "scripting", "tabs"],
   "host_permissions": [
     "https://*.linkedin.com/*",

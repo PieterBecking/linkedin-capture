@@ -1,45 +1,8 @@
 // Scrapes the open LinkedIn message thread. Idempotent: safe to inject
-// multiple times via chrome.scripting.executeScript.
+// multiple times via chrome.scripting.executeScript, after thread-reader.js.
 (async () => {
   function txt(el) {
     return (el?.innerText || el?.textContent || '').trim();
-  }
-
-  function threadIdFromUrl() {
-    // Normal thread: /messaging/thread/<id>/
-    const m = location.pathname.match(/\/messaging\/thread\/([^/]+)\/?/);
-    if (m) return decodeURIComponent(m[1]);
-
-    // Compose overlay opened from a profile: /messaging/compose/?recipient=...
-    // No thread id exists yet, so key off the recipient (fsd_profile id) so the
-    // CRM upsert (external_id = linkedin:<threadId>) stays stable per person.
-    if (/\/messaging\/compose\b/.test(location.pathname)) {
-      const params = new URLSearchParams(location.search);
-      const recipient = params.get('recipient');
-      if (recipient) return `compose:${recipient}`;
-      const urn = params.get('profileUrn'); // urn:li:fsd_profile:ACoAA...
-      if (urn) {
-        const id = urn.split(':').pop();
-        if (id) return `compose:${id}`;
-      }
-    }
-    return null;
-  }
-
-  function findThreadTitle() {
-    // The thread header is the participant name/group title.
-    const sel = [
-      'h2.msg-entity-lockup__entity-title',
-      '.msg-thread__link-to-profile',
-      '.msg-overlay-bubble-header__title',
-      'header h2',
-    ];
-    for (const s of sel) {
-      const el = document.querySelector(s);
-      const t = txt(el);
-      if (t) return t;
-    }
-    return null;
   }
 
   function normalizeProfileHref(href) {
@@ -61,6 +24,8 @@
   }
 
   function findProfileCandidates(threadTitle) {
+    const { root } = globalThis.LinkedInThreadReader.findThread();
+    if (!root) return [];
     const out = [];
     const push = (href) => {
       const p = normalizeProfileHref(href);
@@ -74,12 +39,12 @@
       '.msg-entity-lockup a[href*="/in/"]',
       '.msg-title-bar a[href*="/in/"]',
       '.msg-overlay-bubble-header a[href*="/in/"]',
-    ].forEach((s) => push(document.querySelector(s)?.getAttribute('href')));
+    ].forEach((s) => push(root.querySelector(s)?.getAttribute('href')));
 
     // Message-group sender links sometimes carry the vanity URL. Only take
     // the counterparty's (name matches the thread title), never our own.
     if (threadTitle) {
-      document
+      root
         .querySelectorAll('a.msg-s-message-group__profile-link, .msg-s-message-group__profile-link a')
         .forEach((a) => {
           if (txt(a).includes(threadTitle)) push(a.getAttribute('href'));
@@ -116,53 +81,7 @@
     return (await resolveVanityUrl(first.url)) || first.url;
   }
 
-  function scrapeMessages() {
-    const list =
-      document.querySelector('.msg-s-message-list-content') ||
-      document.querySelector('.msg-s-message-list') ||
-      document.querySelector('ul.msg-s-message-list-content');
-    if (!list) return [];
-
-    const out = [];
-    let currentSender = null;
-    let currentTime = null;
-
-    list.querySelectorAll('li, .msg-s-message-list__event').forEach((item) => {
-      const nameEl = item.querySelector(
-        '.msg-s-message-group__name, .msg-s-message-group__profile-link',
-      );
-      if (nameEl) currentSender = txt(nameEl);
-
-      const timeEl = item.querySelector('time, .msg-s-message-group__timestamp');
-      if (timeEl) {
-        currentTime = timeEl.getAttribute('datetime') || txt(timeEl);
-      }
-
-      const bodyEl = item.querySelector(
-        '.msg-s-event-listitem__body, [class*="event-listitem__body"]',
-      );
-      const body = txt(bodyEl);
-      if (body) {
-        out.push({
-          sender: currentSender || 'Unknown',
-          text: body,
-          timestamp: currentTime || null,
-        });
-      }
-    });
-
-    return out;
-  }
-
-  const messages = scrapeMessages();
-  const threadTitle = findThreadTitle();
-  return {
-    ok: messages.length > 0,
-    url: location.href,
-    threadId: threadIdFromUrl(),
-    threadTitle,
-    profileUrl: await findProfileUrl(threadTitle),
-    capturedAt: new Date().toISOString(),
-    messages,
-  };
+  const snapshot = globalThis.LinkedInThreadReader.read();
+  const profileUrl = await findProfileUrl(snapshot.threadTitle);
+  return { ...snapshot, profileUrl };
 })();

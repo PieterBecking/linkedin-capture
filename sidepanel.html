@@ -17,6 +17,33 @@
 
     <section id="status" class="status hidden"></section>
 
+    <section id="replyCard" class="card reply-card hidden" aria-labelledby="replyHeading">
+      <div class="reply-heading">
+        <h1 id="replyHeading">Quick reply</h1>
+        <button id="readReplyBtn" class="text-button" type="button">Read again</button>
+      </div>
+      <div id="replyContext" class="reply-context">Reading the open conversation…</div>
+      <div id="replyStatus" class="meta" role="status" aria-live="polite"></div>
+      <details id="replySource" class="reply-source hidden">
+        <summary>Message being answered</summary>
+        <p id="replySourceText"></p>
+      </details>
+      <label for="replyKind" class="field-label">Reply type</label>
+      <select id="replyKind" class="select-input" disabled>
+        <option value="">Choose a reply type…</option>
+        <option value="recruiter">Recruiter · politely decline</option>
+        <option value="investor">Investor · keep in touch</option>
+        <option value="services">Engineering services · politely decline</option>
+      </select>
+      <label for="replyDraft" class="field-label">Your reply</label>
+      <textarea id="replyDraft" class="notes-input reply-draft" rows="7" placeholder="A suggested reply will appear here. You can edit it before copying." disabled></textarea>
+      <div class="reply-actions">
+        <button id="copyReplyBtn" class="btn reply-copy" type="button" disabled>Copy reply</button>
+        <button id="resetReplyBtn" class="btn" type="button" disabled>Reset draft</button>
+      </div>
+      <a href="#" id="replySettings" class="link">Customize your saved replies</a>
+    </section>
+
     <section id="captureCard" class="card">
       <button id="captureBtn" class="btn primary">Capture this thread</button>
       <div id="captureMeta" class="meta hidden"></div>
@@ -76,6 +103,8 @@
     <div id="suggestPopover" class="suggest-popover hidden"></div>
   </div>
 
+  <script src="reply-templates.js"></script>
+  <script src="reply-panel.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>

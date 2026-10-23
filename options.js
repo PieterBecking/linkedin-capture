@@ -119,3 +119,51 @@ async function testExt() {
 extSaveBtn.addEventListener('click', saveExt);
 extTestBtn.addEventListener('click', testExt);
 loadExt();
+
+// ── saved replies (local; no API credentials needed) ───────────────────────
+const replyFields = {
+  recruiter: document.getElementById('recruiterTemplate'),
+  investor: document.getElementById('investorTemplate'),
+  services: document.getElementById('servicesTemplate'),
+};
+const repliesMsg = document.getElementById('repliesMsg');
+const saveRepliesBtn = document.getElementById('saveRepliesBtn');
+const resetRepliesBtn = document.getElementById('resetRepliesBtn');
+function showReplyTemplates(saved) {
+  for (const [key, value] of Object.entries(ReplyTemplates.templates(saved))) {
+    replyFields[key].value = value;
+  }
+}
+saveRepliesBtn.addEventListener('click', async () => {
+  const replyTemplates = Object.fromEntries(
+    Object.entries(replyFields).map(([key, field]) => [key, field.value.trim()]),
+  );
+  if (Object.values(replyTemplates).some((value) => !value)) {
+    repliesMsg.textContent = 'Fill in all three replies before saving.';
+    return;
+  }
+  saveRepliesBtn.disabled = true;
+  try {
+    await chrome.storage.local.set({ replyTemplates });
+    repliesMsg.textContent = 'Saved. New drafts will use this wording.';
+  } catch {
+    repliesMsg.textContent = 'Could not save your replies. Please try again.';
+  } finally {
+    saveRepliesBtn.disabled = false;
+  }
+});
+resetRepliesBtn.addEventListener('click', () => {
+  showReplyTemplates(ReplyTemplates.defaults);
+  repliesMsg.textContent = 'Defaults restored here. Click Save replies to keep them.';
+});
+saveRepliesBtn.disabled = true;
+resetRepliesBtn.disabled = true;
+chrome.storage.local.get('replyTemplates').then(({ replyTemplates }) => {
+  showReplyTemplates(replyTemplates);
+}).catch(() => {
+  showReplyTemplates();
+  repliesMsg.textContent = 'Could not load saved replies. Showing defaults.';
+}).finally(() => {
+  saveRepliesBtn.disabled = false;
+  resetRepliesBtn.disabled = false;
+});
