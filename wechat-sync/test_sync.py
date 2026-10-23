@@ -1,4 +1,6 @@
 import tempfile
+import json
+import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -157,6 +159,17 @@ class SyncTests(unittest.TestCase):
             'task_extraction_opt_out': True, 'external_id_upsert': True}}
         with patch.object(client, 'request', return_value=manifest):
             self.assertEqual(client.preflight(), manifest)
+
+    def test_accessibility_checks_launch_as_the_authorized_application(self):
+        with tempfile.TemporaryDirectory() as temp:
+            def launch(command, **kwargs):
+                self.assertEqual(command[:4], ['/usr/bin/open', '-n', '-g', '-W'])
+                self.assertEqual(command[-2:], ['--args', 'doctor'])
+                Path(command[command.index('--stdout') + 1]).write_text(json.dumps({'ok': False, 'accessibility': False}))
+                return subprocess.CompletedProcess(command, 0)
+            with patch.object(sync.subprocess, 'run', side_effect=launch):
+                self.assertFalse(sync.reader(Path(temp), 'doctor')['accessibility'])
+            self.assertEqual(list(Path(temp).iterdir()), [])
 
 
 if __name__ == '__main__':

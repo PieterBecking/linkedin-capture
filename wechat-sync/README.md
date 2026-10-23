@@ -26,7 +26,9 @@ open -n "$HOME/Library/Application Support/Servo7 WeChat Sync/WeChat Brain Reade
 Enable the reader in **System Settings → Privacy & Security → Accessibility**.
 When running commands from a terminal, macOS may require permission for that
 terminal too. Rebuilding the ad-hoc-signed reader may require granting access
-again. No Screen Recording or Full Disk Access permission is required.
+again, and Keychain may ask you to approve the updated reader. Reinstalling
+unchanged native source preserves the existing binary and its approvals.
+No Screen Recording or Full Disk Access permission is required.
 
 Pin the supplier group so it remains visible in the sidebar. Names must match
 exactly and be unique; use a unique WeChat remark when necessary. `link` checks

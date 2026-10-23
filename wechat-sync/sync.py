@@ -222,7 +222,10 @@ def token(directory):
     if os.environ.get('BRAIN_INTERNAL_TOKEN'):
         return os.environ['BRAIN_INTERNAL_TOKEN'].strip()
     binary = directory / 'WeChat Brain Reader.app/Contents/MacOS/wechat-reader'
-    result = subprocess.run([str(binary), 'token-get'], capture_output=True, timeout=20)
+    try:
+        result = subprocess.run([str(binary), 'token-get'], capture_output=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        raise SyncError('Brain credential is unavailable. Unlock Keychain and allow access for the installed reader.') from None
     if result.returncode:
         raise SyncError('Brain credentials are missing or the Keychain is locked. Run configure.')
     return result.stdout.decode().strip()
