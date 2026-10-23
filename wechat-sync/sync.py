@@ -203,6 +203,15 @@ class Brain:
 def reader(directory, *args):
     application = directory / 'WeChat Brain Reader.app'
     try:
+        # A terminal can have Accessibility access independently of the app.
+        direct = subprocess.run([str(application / 'Contents/MacOS/wechat-reader'), *args],
+                                capture_output=True, text=True, timeout=300)
+        value = json.loads(direct.stdout)
+        needs_app = (args[0] == 'doctor' and not value.get('accessibility')) or value.get('error') == 'accessibility_required'
+        if not needs_app:
+            if value.get('ok') is False and args[0] != 'doctor':
+                raise SyncError(value.get('message', 'The WeChat reader failed.'))
+            return value
         # Launch as the authorized app, including from launchd, rather than
         # inheriting whichever terminal happened to start the Python process.
         with tempfile.TemporaryDirectory(prefix='reader-', dir=directory) as temp:
@@ -213,7 +222,7 @@ def reader(directory, *args):
             value = json.loads(output.read_text())
     except (OSError, ValueError, subprocess.TimeoutExpired) as error:
         raise SyncError(f'WeChat reader failed ({type(error).__name__}). Run install.sh, then doctor.') from None
-    if result.returncode or (value.get('ok') is False and args[0] != 'doctor'):
+    if value.get('ok') is False and args[0] != 'doctor':
         raise SyncError(value.get('message', 'The WeChat reader failed.'))
     return value
 

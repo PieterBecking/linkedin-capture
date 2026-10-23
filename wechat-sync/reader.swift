@@ -91,20 +91,28 @@ func messageList(_ root: AXUIElement) throws -> AXUIElement {
     return list
 }
 func click(_ el: AXUIElement, _ pid: pid_t) throws {
-    if AXUIElementPerformAction(el, kAXPressAction as CFString) == .success { return }
+    // WeChat's Qt accessibility adapter reports AXPress success without
+    // selecting a row. Use a real click only while WeChat is foreground.
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+        try fail("user_interrupted", "Capture stopped because the foreground application changed.")
+    }
     guard let rect = bounds(el) else { try fail("chat_unavailable", "The selected chat is not visible.") }
     let p = CGPoint(x: rect.midX, y: rect.midY)
     for type in [CGEventType.leftMouseDown, .leftMouseUp] {
-        CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: .left)?.postToPid(pid)
+        CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.05)
     }
 }
 func scroll(_ list: AXUIElement, _ pixels: Int32, _ pid: pid_t) throws {
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+        try fail("user_interrupted", "Capture stopped because the foreground application changed.")
+    }
     guard let rect = bounds(list), let e = CGEvent(scrollWheelEvent2Source: nil, units: .pixel,
           wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0) else {
         try fail("scroll_failed", "Could not scroll WeChat's message pane.")
     }
     e.location = CGPoint(x: rect.midX, y: rect.midY)
-    e.postToPid(pid)
+    e.post(tap: .cghidEventTap)
 }
 func rows(_ list: AXUIElement) -> [[String: Any]] {
     children(list).compactMap { el -> [String: Any]? in
@@ -143,6 +151,10 @@ func readChat(_ chat: String, _ maxPages: Int) throws -> [String: Any] {
         if NSWorkspace.shared.frontmostApplication?.processIdentifier == running.processIdentifier {
             previous?.activate(options: [])
         }
+    }
+    for _ in 0..<30 {
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == running.processIdentifier { break }
+        Thread.sleep(forTimeInterval: 0.1)
     }
     try click(candidates[0].1, running.processIdentifier)
     for _ in 0..<30 {

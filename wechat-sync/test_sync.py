@@ -163,6 +163,8 @@ class SyncTests(unittest.TestCase):
     def test_accessibility_checks_launch_as_the_authorized_application(self):
         with tempfile.TemporaryDirectory() as temp:
             def launch(command, **kwargs):
+                if command[0].endswith('/wechat-reader'):
+                    return subprocess.CompletedProcess(command, 0, stdout=json.dumps({'ok': False, 'accessibility': False}))
                 self.assertEqual(command[:4], ['/usr/bin/open', '-n', '-g', '-W'])
                 self.assertEqual(command[-2:], ['--args', 'doctor'])
                 Path(command[command.index('--stdout') + 1]).write_text(json.dumps({'ok': False, 'accessibility': False}))
@@ -170,6 +172,13 @@ class SyncTests(unittest.TestCase):
             with patch.object(sync.subprocess, 'run', side_effect=launch):
                 self.assertFalse(sync.reader(Path(temp), 'doctor')['accessibility'])
             self.assertEqual(list(Path(temp).iterdir()), [])
+
+    def test_terminal_permission_can_be_used_without_separate_app_approval(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(sync.subprocess, 'run', return_value=subprocess.CompletedProcess(
+                    [], 0, stdout=json.dumps({'ok': True, 'accessibility': True}))) as run:
+                self.assertTrue(sync.reader(Path(temp), 'doctor')['accessibility'])
+                self.assertEqual(run.call_count, 1)
 
 
 if __name__ == '__main__':
